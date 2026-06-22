@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/nigel.png" width="120" style="background:#fff; border-radius:16px; padding:12px;" alt="Nigel Logo" />
+  <img src="assets/nigel.png" width="120" style="background:#ffffff; border-radius:16px; padding:14px; border: 3px solid #C9A84C; box-shadow: 0 0 0 1px #e8c86a;" alt="Nigel Logo" />
 </p>
 
 <h1 align="center">Nigel</h1>
