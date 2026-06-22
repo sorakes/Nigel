@@ -309,6 +309,8 @@ class GraphTab(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._persistent_edges = []
         self._last_hash = None
+        self._nodes_hash = None
+        self._analysis_worker = None
         self._nodes = []
         self._edges = []
         self._selected = None
@@ -364,8 +366,36 @@ class GraphTab(QWidget):
         if current_hash != self._last_hash:
             self._last_hash = current_hash
             self._build_graph(items)
+        else:
+            self._build_graph(items)
+        self._maybe_analyze(items)
+
+    def _maybe_analyze(self, items):
+        """Quando o conteúdo dos nós muda, deixa a IA repensar as relações em background."""
+        if not items or len(items) < 2:
             return
-        self._build_graph(items)
+        nodes_sig = hash(str(sorted(
+            (str(i.get('id')), str(i.get('title') or i.get('subject')), str(i.get('body') or i.get('body_preview')))
+            for i in items
+        )))
+        if nodes_sig == self._nodes_hash:
+            return
+        if self._analysis_worker is not None and self._analysis_worker.isRunning():
+            return
+        self._nodes_hash = nodes_sig
+        try:
+            from core.polling_engine import GraphAnalysisWorker
+            self._analysis_worker = GraphAnalysisWorker()
+            self._analysis_worker.analysis_done.connect(self._on_analysis_done)
+            self._analysis_worker.start()
+            self.status.setText('pensando nas conexões…')
+        except Exception as e:
+            print(f"[Nigel] não consegui iniciar análise do grafo: {e}")
+
+    def _on_analysis_done(self):
+        self.status.setText('')
+        self._last_hash = None
+        self.refresh()
 
     def _build_graph(self, items: list[dict]):
         self.scene.clear()
@@ -444,7 +474,7 @@ class GraphTab(QWidget):
                 continue
             seen_pairs.add(key)
             if a in node_by_id and b in node_by_id and (a != b):
-                strong = relation in ('ai_related', 'mentions_persona')
+                strong = relation in ('ai_related', 'mentions_persona', 'persona_fact')
                 self._add_edge(node_by_id[a], node_by_id[b], strong=strong, relation=relation)
         self.stats.setText(f"{len(self._nodes)} nós · {len(self._edges)} conexões")
         if not self._fit_done:

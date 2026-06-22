@@ -261,7 +261,7 @@ class ScheduleAlertDialog(QWidget):
         from core.api_client import APIClient
         title = self._item.get('title', 'Lembrete')
         desc = self._item.get('description', '')
-        greeting_prompt = f"O lembrete '{title}' acabou de vencer." + (f" Contexto: {desc}." if desc else '') + ' Dê uma mensagem EXTREMAMENTE curta (1 linha) avisando.' + " REGRA: NÃO gere nenhum JSON ou 'buttons' agora. Apenas avise o vencimento e espere o usuário dizer o que quer."
+        greeting_prompt = f"The reminder '{title}' just became due." + (f" Context: {desc}." if desc else '') + ' Give an EXTREMELY short message (1 line) in the user\'s language (usually Portuguese) warning about it.' + " RULE: do NOT generate any JSON or 'buttons' now. Just warn about the due reminder and wait for the user to say what they want."
         self._history = [{'role': 'user', 'content': greeting_prompt}]
         self._ai_label = self._add_msg('🧠 …', is_user=False)
         self._ai_buffer = ''

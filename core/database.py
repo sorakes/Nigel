@@ -101,13 +101,6 @@ class NigelDB:
             return 'agenda'
         return 'note'
 
-    def _tokenize(self, text: str) -> set[str]:
-        text = text.lower() if text else ''
-        text = re.sub(r'[^a-z0-9áàâãéèêíóôõúçñ\s]', ' ', text)
-        words = {w for w in text.split() if len(w) >= 4}
-        stop = frozenset({'este', 'essa', 'lembrete', 'histórico', 'uma', 'sobre', 'para', 'persona', 'com', 'historico', 'agenda', 'esse', 'esta'})
-        return words - stop
-
     def _person_relation_key(self, name: str) -> str:
         digest = hashlib.sha1(name.strip().lower().encode('utf-8')).hexdigest()[:10]
         return f'person:{digest}'
@@ -197,57 +190,10 @@ class NigelDB:
 
         self.conn.commit()
 
-    def rebuild_system_edges(self):
-        self.sync_saved_items_to_knowledge()
-        self.conn.execute("DELETE FROM knowledge_edges WHERE created_by = 'system'")
-        nodes = [dict(r) for r in self.conn.execute('SELECT * FROM knowledge_nodes').fetchall()]
-        by_id = {n['id']: n for n in nodes}
-        persona = [n for n in nodes if n['node_type'] == 'persona']
-        others = [n for n in nodes if n['node_type'] != 'persona']
-
-        for p in persona:
-            p_tokens = self._tokenize(f"{p.get('title', '')} {p.get('body', '')}")
-            if not p_tokens:
-                continue
-            for n in others:
-                n_tokens = self._tokenize(f"{n.get('title', '')} {n.get('body', '')}")
-                overlap = p_tokens & n_tokens
-                if overlap:
-                    self._upsert_edge(p['id'], n['id'], 'mentions_persona', 0.9, 'system')
-
-        items = [dict(r) for r in self.conn.execute('SELECT * FROM saved_items').fetchall()]
-        sender_map = {}
-        for item in items:
-            sender = (item.get('sender') or '').strip().lower()
-            if sender and item['id'] in by_id:
-                sender_map.setdefault(sender, []).append(item['id'])
-
-        for ids in sender_map.values():
-            for i in range(len(ids)):
-                for j in range(i + 1, len(ids)):
-                    self._upsert_edge(ids[i], ids[j], 'same_sender', 0.7, 'system')
-
-        for i in range(len(others)):
-            a = others[i]
-            ta = self._tokenize(f"{a.get('title', '')} {a.get('body', '')}")
-            if not ta:
-                continue
-            for j in range(i + 1, len(others)):
-                b = others[j]
-                tb = self._tokenize(f"{b.get('title', '')} {b.get('body', '')}")
-                if not tb:
-                    continue
-                overlap = ta & tb
-                if not overlap:
-                    continue
-                score = len(overlap) / max(len(ta), len(tb))
-                if score >= 0.22:
-                    self._upsert_edge(a['id'], b['id'], 'same_topic', min(0.95, 0.45 + score), 'system')
-
-        self.conn.commit()
-
     def get_knowledge_graph(self, limit: int = 80) -> dict:
-        self.rebuild_system_edges()
+        # Edges are decided by the AI (see ai_triage.analyze_graph). Here we only keep
+        # the nodes in sync; the persona's radial structure is drawn by the UI.
+        self.sync_saved_items_to_knowledge()
         nodes = [dict(r) for r in self.conn.execute('''
             SELECT * FROM knowledge_nodes
             ORDER BY CASE node_type WHEN 'persona' THEN 0 ELSE 1 END,
@@ -268,14 +214,16 @@ class NigelDB:
 
         self.sync_saved_items_to_knowledge()
         self.conn.execute("DELETE FROM knowledge_edges WHERE created_by = 'ai'")
-        valid_ids = {r['id'] for r in self.conn.execute("SELECT id FROM knowledge_nodes WHERE node_type != 'persona'").fetchall()}
+        node_types = {r['id']: r['node_type'] for r in self.conn.execute("SELECT id, node_type FROM knowledge_nodes").fetchall()}
 
         for pair in edges or []:
             if len(pair) != 2:
                 continue
             a, b = str(pair[0]), str(pair[1])
-            if a in valid_ids and b in valid_ids and a != b:
-                self._upsert_edge(a, b, 'ai_related', 0.85, 'ai')
+            if a in node_types and b in node_types and a != b:
+                involves_persona = node_types[a] == 'persona' or node_types[b] == 'persona'
+                relation = 'mentions_persona' if involves_persona else 'ai_related'
+                self._upsert_edge(a, b, relation, 0.85, 'ai')
 
         self.conn.commit()
 

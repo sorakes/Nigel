@@ -15,6 +15,22 @@ from core.database import SeqDB
 
 _POLL_INTERVAL = 60
 
+class GraphAnalysisWorker(QThread):
+    __doc__ = 'Pede para a IA pensar nas relações do grafo de conhecimento (em background).'
+
+    analysis_done = pyqtSignal()
+
+    def run(self):
+        try:
+            db = SeqDB.get_instance()
+            graph = db.get_knowledge_graph(limit=80)
+            result = ai_triage.analyze_graph(graph['nodes'])
+            if result is not None:
+                db.replace_ai_knowledge_edges(result.get('edges'), result.get('scores'))
+                self.analysis_done.emit()
+        except Exception as e:
+            print(f"[Nigel] GraphAnalysisWorker erro: {e}")
+
 class GraphPollingWorker(QThread):
     __doc__ = 'Lê e-mails do Outlook (Microsoft Graph) em background.'
 

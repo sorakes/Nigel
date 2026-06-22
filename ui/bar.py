@@ -785,9 +785,9 @@ class Bar(QWidget):
         items = db.get_saved_items()
         graph = db.get_knowledge_graph(limit=40)
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        sys_msg = 'Você é o assistente pessoal inteligente Nigel. Você tem acesso à seguinte memória (informações salvas) sobre o usuário e seu contexto:\n'
+        sys_msg = 'You are Nigel, an intelligent personal assistant. Always reply to the user in the language they wrote in (usually Portuguese), but reason internally in English. You have access to the following memory (saved information) about the user and their context:\n'
         if not items:
-            sys_msg += '- Nenhuma informação na memória ainda.\n'
+            sys_msg += '- No information in memory yet.\n'
         else:
             for i in items:
                 subj = i.get('subject') or i.get('ai_summary') or ''
@@ -798,25 +798,42 @@ class Bar(QWidget):
                 else:
                     sys_msg += f"- [{source}] {subj}\n"
         sys_msg += self._knowledge_graph_context(graph)
-        sys_msg += f"\nSe o usuário perguntar algo sobre si mesmo ou informações que estejam na memória acima, responda usando esses dados de forma natural.\n\nVocê também atua como motor de conhecimento pessoal:\n- Durante a conversa, observe fatos relevantes que merecem compor o grafo de memória do usuário.\n- Valorize pequenos detalhes com valor futuro: pessoas importantes, preferências, problemas recorrentes, contexto de trabalho, mensagens importantes, reuniões relevantes, objetos quebrados, compromissos e decisões.\n- Quando detectar algo relevante, use `save_memory` no JSON de tools conforme as regras abaixo.\n- Não invente dados. Só salve o que o usuário afirmou ou o que está claramente no contexto.\n- O app é global: nunca assuma dados específicos de uma pessoa que não estejam na memória ou na mensagem atual.\n- Se uma pessoa nova aparecer em contexto importante, aja como agente: demonstre interesse, pergunte quem ela é e só então trate como conhecida.\n- Em primeiro contato com uma pessoa/entidade ligada a evento, visita, mensagem, compromisso ou decisão pessoal, prefira uma pergunta curta de contexto antes de executar a agenda, salvo se o usuário já explicou quem/que contexto é.\n- Não deixe curiosidade de Persona bloquear comandos objetivos sobre lembretes existentes, como cancelar, remarcar, concluir ou adiar. Nesses casos, use agenda e o grafo/memória/chat para resolver referência e só pergunte se for necessário para escolher o lembrete correto.\n- Nome isolado não é Persona. Persona precisa de relação, preferência, hábito, papel ou fato claro informado pelo usuário.\n- Sua inteligência deve se autoalimentar por boas perguntas curtas, não por suposições ou listas fixas. Entenda respostas subjetivas em qualquer idioma.\n- Quando sua análise crítica concluir que precisa conhecer melhor uma entidade antes de agir, use `clarification` no JSON de ferramentas e coloque qualquer ação pendente em `pending_buttons`.\n- Não espere o app detectar isso por regra local. Essa decisão é sua como agente.\n- Ao receber uma resposta de clarificação, julgue se ela realmente ensina algo útil. Nunca salve respostas cruas como \"não\", \"sim\", \"talvez\" ou frases sem contexto.\n- Se a resposta abrir outra lacuna relevante, faça uma nova pergunta curta antes de salvar. Não use exemplos ou nomes inventados.\n\n{build_chat_agenda_prompt(now)}\n"
+        sys_msg += (
+            "\nIf the user asks something about themselves or about information in the memory above, answer naturally using that data.\n\n"
+            "You also act as a personal knowledge engine:\n"
+            "- During the conversation, notice relevant facts worth adding to the user's memory graph.\n"
+            "- Value small details with future value: important people, preferences, recurring problems, work context, important messages, relevant meetings, broken objects, commitments and decisions.\n"
+            "- When you detect something relevant, use save_memory in the tools JSON as described below.\n"
+            "- Do not invent data. Only save what the user stated or what is clearly in context.\n"
+            "- The app is global: never assume data about a person that is not in memory or in the current message.\n"
+            "- If a new person appears in an important context, act like an agent: show interest, ask who they are, and only then treat them as known.\n"
+            "- On first contact with a person/entity tied to an event, visit, message, commitment or personal decision, prefer a short context question before running the agenda — unless the user already explained who/what it is.\n"
+            "- Do NOT let persona curiosity block objective commands about existing reminders (cancel, reschedule, complete, postpone). In those cases use the agenda and the graph/memory/chat to resolve the reference, and only ask if needed to pick the right reminder.\n"
+            "- A bare name is not persona. Persona needs a relationship, preference, habit, role or clear fact stated by the user.\n"
+            "- Your intelligence must grow through good short questions, never through assumptions or fixed lists. Understand subjective answers in any language.\n"
+            "- When your critical analysis concludes you need to know an entity better before acting, use clarification in the tools JSON and move any pending action into pending_buttons.\n"
+            "- After a clarification answer, judge whether it actually teaches something useful. Never save raw answers like \"no\", \"yes\", \"maybe\" or context-free phrases.\n"
+            "- If the answer opens another relevant gap, ask one more short question before saving. Do not use invented examples or names.\n\n"
+            f"{build_chat_agenda_prompt(now)}\n"
+        )
         return [{'role': 'system', 'content': sys_msg}] + self._history
 
     def _knowledge_graph_context(self, graph: dict) -> str:
         nodes = graph.get('nodes', []) or []
         edges = graph.get('edges', []) or []
         if not nodes:
-            return '\n## GRAFO DE CONHECIMENTO: vazio.\n'
+            return '\n## KNOWLEDGE GRAPH: empty.\n'
         by_id = {n.get('id'): n for n in nodes}
-        lines = ['\n## GRAFO DE CONHECIMENTO (nós e conexões relevantes)']
+        lines = ['\n## KNOWLEDGE GRAPH (relevant nodes and connections)']
         for n in nodes[:18]:
-            title = n.get('title') or n.get('id') or 'Nó'
+            title = n.get('title') or n.get('id') or 'Node'
             body = (n.get('body') or '').replace('\n', ' ').strip()
             node_type = n.get('node_type', 'note')
             source = n.get('source', '')
             snippet = f": {body[:100]}" if body else ''
             lines.append(f"- [{node_type}/{source}] {title}{snippet}")
         if edges:
-            lines.append('Conexões:')
+            lines.append('Connections:')
             for e in edges[:24]:
                 a = by_id.get(e.get('source_id'), {})
                 b = by_id.get(e.get('target_id'), {})
@@ -828,13 +845,29 @@ class Bar(QWidget):
         return '\n'.join(lines) + '\n'
 
     def _review_history_for_draft(self, draft: str):
-        review_sys = 'Você é a camada de revisão crítica do Nigel antes da resposta aparecer ao usuário.\n\nRevise o rascunho abaixo e devolva APENAS a resposta final corrigida, incluindo JSON de ferramentas se necessário.\n\nChecklist obrigatório:\n- Antes de aprovar uma agenda que envolve pessoa/entidade/lugar/projeto citado pelo usuário, verifique a memória disponível no system prompt. Se o contexto ainda não é conhecido e isso pode importar para prioridade, privacidade, tom ou Persona, a resposta final DEVE usar `clarification` e colocar a agenda em `pending_buttons`.\n- Se o rascunho criou agenda envolvendo uma entidade ainda não compreendida e não usou `clarification`, corrija. Não deixe criar direto só porque a data/hora está clara.\n- Se o usuário está cancelando, remarcando, concluindo ou adiando lembrete existente, não transforme isso em curiosidade de Persona. Resolva a ação com agenda/memória/grafo; pergunte apenas se houver ambiguidade sobre qual lembrete.\n- Se o texto faz uma pergunta para entender uma pessoa/entidade antes de agir, a resposta final DEVE usar `clarification` e mover qualquer ação de agenda para `pending_buttons`. Não deixe `buttons` ativos nesse caso.\n- Se o rascunho menciona curiosidade ou dúvida mas também cria/atualiza agenda imediatamente, corrija para clarificação.\n- Se a ação depende de uma resposta do usuário, não use `create_schedule`, `update_schedule` ou `save_memory` ainda.\n- Em continuação interna, se o usuário não respondeu a curiosidade mas claramente quer prosseguir com a ação pendente, não repita a mesma pergunta. Conclua a ação pendente e deixe a curiosidade para outro momento.\n- Se salvar Persona, salve somente fatos úteis explicados pelo usuário; nunca salve só nome nem resposta crua.\n- Se não houver problema, mantenha a intenção original e o JSON válido.\n- Não explique a revisão. Não cite este checklist.\n'
+        review_sys = (
+            "You are Nigel's critical review layer, running before the reply is shown to the user. "
+            "Review the draft below and return ONLY the corrected final reply, including the tools JSON when needed. "
+            "Write the user-facing text in the user's language (usually Portuguese).\n\n"
+            "Mandatory checklist:\n"
+            "- THE GOLDEN RULE: if the draft promises a scheduling action (created/updated/rescheduled/postponed/completed a reminder) but has no JSON tool block, ADD the correct JSON block. A reminder without JSON does not exist.\n"
+            "- Before approving an agenda action involving a person/entity/place/project mentioned by the user, check the memory in the system prompt. If the context is still unknown and could matter for priority, privacy, tone or persona, the final reply MUST use clarification and move the agenda into pending_buttons.\n"
+            "- If the draft created an agenda action for an entity that is not yet understood and did not use clarification, fix it. Do not create directly just because the date/time is clear.\n"
+            "- If the user is canceling, rescheduling, completing or postponing an existing reminder, do NOT turn it into persona curiosity. Resolve the action with the agenda/memory/graph; ask only if it is ambiguous which reminder.\n"
+            "- If the text asks a question to understand a person/entity before acting, the final reply MUST use clarification and move any agenda action into pending_buttons. Do not leave active buttons in that case.\n"
+            "- If the draft mentions curiosity or doubt but also creates/updates the agenda immediately, fix it to a clarification.\n"
+            "- If the action depends on a user answer, do not use create_schedule, update_schedule or save_memory yet.\n"
+            "- In an internal continuation, if the user did not answer the curiosity but clearly wants to proceed with the pending action, do not repeat the same question. Complete the pending action and leave the curiosity for later.\n"
+            "- When saving persona, save only useful facts the user explained; never save just a name or a raw answer.\n"
+            "- If there is no problem, keep the original intent and valid JSON.\n"
+            "- Do not explain the review. Do not cite this checklist.\n"
+        )
         hist = list(self._last_full_history)
         if hist and hist[0]['role'] == 'system':
-            hist[0] = {'role': 'system', 'content': review_sys + '\n\n=== REGRAS GERAIS DE FERRAMENTAS DO NIGEL ===\n' + hist[0]['content']}
+            hist[0] = {'role': 'system', 'content': review_sys + '\n\n=== NIGEL GENERAL TOOL RULES ===\n' + hist[0]['content']}
         else:
             hist.insert(0, {'role': 'system', 'content': review_sys})
-        return hist + [{'role': 'assistant', 'content': f"RASCUNHO A REVISAR:\n{draft}"}, {'role': 'user', 'content': 'Revise criticamente e entregue a resposta final do Nigel agora. OBRIGATÓRIO: A resposta final DEVE conter o bloco ```json ... ``` com as ferramentas se houver alguma ação/lembrete no rascunho.'}]
+        return hist + [{'role': 'assistant', 'content': f"DRAFT TO REVIEW:\n{draft}"}, {'role': 'user', 'content': 'Critically review and deliver Nigel\'s final reply now. MANDATORY: the final reply MUST contain the ```json ... ``` tool block if there is any action/reminder in the draft.'}]
 
     def _start_stream(self, phase: str = 'draft', messages: list[dict] | None = None):
         if self._worker and self._worker.isRunning():
@@ -1114,9 +1147,48 @@ class Bar(QWidget):
         answer = text.strip()
         buttons = pending.get('buttons', [])
         actions = self._agenda_actions_from_buttons(buttons)
-        self._continue_after_persona_clarification(name=name, answer=answer, question=pending.get('question', ''), original_request=pending.get('user_text', ''), pending_buttons=buttons, can_auto_execute=len(actions) == 1)
+
+        # Salva o contexto da persona imediatamente na memória
+        if answer and len(answer) > 2:
+            try:
+                executor = self._agenda_executor_instance()
+                executor.execute({
+                    'type': 'save_memory',
+                    'category': 'persona',
+                    'subject': name,
+                    'note': answer
+                }, user_text=answer)
+            except Exception:
+                pass
+
+        if not actions:
+            # IA não incluiu pending_buttons — re-dispara o pedido original com o contexto atualizado
+            self._retry_original_request_with_context(
+                original_request=pending.get('user_text', ''),
+                context_note=f"{name} é: {answer}"
+            )
+        else:
+            self._continue_after_persona_clarification(
+                name=name, answer=answer,
+                question=pending.get('question', ''),
+                original_request=pending.get('user_text', ''),
+                pending_buttons=buttons, can_auto_execute=len(actions) == 1
+            )
         self._scroll_bottom()
         return True
+
+    def _retry_original_request_with_context(self, original_request: str, context_note: str):
+        """Re-dispara o pedido original após obter contexto de clarificação."""
+        if not original_request:
+            return
+        if not self._api.get_active_provider():
+            return
+        self._last_user_text = original_request
+        self._allow_next_persona_save = True
+        # Inject a short hint so the AI understands what to do
+        hint = f"[updated context: {context_note}] Now process the previous request and emit the agenda tool JSON: {original_request}"
+        self._history.append({'role': 'user', 'content': hint})
+        self._start_stream()
 
     def _continue_after_persona_clarification(self, name: str, answer: str, question: str, original_request: str, pending_buttons: list | None = None, can_auto_execute: bool = False):
         if not original_request:
@@ -1130,26 +1202,17 @@ class Bar(QWidget):
         self._continuation_pending_buttons = list(pending_buttons or [])
         self._continuation_subject = name
         pending_json = json.dumps(pending_buttons or [], ensure_ascii=False)
-        prompt = f"""[Continuação interna do Nigel]
-Pedido original: {original_request}
-Entidade/contexto em aberto: {name}
-Pergunta que você já fez: {question}
-Resposta do usuário: {answer}
+        prompt = f"""[Continuation: {name} = {answer}]
+Original request: {original_request}
 
-Avalie a resposta:
-- Se trouxer informações úteis (ex: 'é meu irmão'), salve isso com `save_memory`.
-- Se a resposta for vaga ou você já tem o contexto, não precisa salvar memória.
+Now that you know {name} is "{answer}", process the original request.
+- If you learned something useful, save it with save_memory in "actions".
+- Include the agenda button below in "buttons" (copy it exactly).
+- Written reply: max 1 sentence, in the user's language. Do NOT say "done" without the JSON.
 
-Abaixo estão as "Ações pendentes originais". Você DEVE copiar essas ações pendentes e incluir no seu bloco JSON de retorno (dentro de "buttons"), para que a ação do usuário seja executada.
-
-Ações pendentes originais a copiar: {pending_json}
-
-OBRIGATÓRIO: A sua resposta final escrita deve ser curta e direta, e logo abaixo dela você DEVE incluir o bloco JSON exato seguindo este template de preenchimento obrigatório:
 ```json
 {{
-  "actions": [
-    {{ "type": "save_memory", "category": "persona", "subject": "{name}", "note": "informacao aprendida" }}
-  ],
+  "actions": [],
   "buttons": {pending_json}
 }}
 ```"""
@@ -1217,6 +1280,8 @@ OBRIGATÓRIO: A sua resposta final escrita deve ser curta e direta, e logo abaix
                 
         user_text = getattr(self, '_last_user_text', '')
         from ui.agenda_skills import normalize_action
+        _AGENDA_TYPES = {'create_schedule', 'update_schedule', 'reschedule', 'mark_done', 'delete_schedule', 'postpone'}
+        agenda_acted = False
         for action in data.get('actions', []):
             held_name = None if self._allow_next_persona_save else self._should_hold_persona_save(action)
             if held_name:
@@ -1224,10 +1289,24 @@ OBRIGATÓRIO: A sua resposta final escrita deve ser curta e direta, e logo abaix
                 self._add_bubble(f"Isso parece importante para sua Persona, mas antes preciso entender melhor: quem é {held_name} para você?", is_user=False, tone='persona')
                 self._remove_thinking_orb()
                 return
-            if auto_execute or action.get('type') == 'save_memory':
+            atype = normalize_action(action, user_text).get('type', '')
+            # Agenda actions placed in "actions" execute immediately (same as the popup)
+            if atype in _AGENDA_TYPES:
+                result = executor.execute(normalize_action(action, user_text), user_text=user_text)
+                self._add_action_indicator(result, tone='normal')
+                agenda_acted = True
+            elif auto_execute or action.get('type') == 'save_memory':
                 result = executor.execute(normalize_action(action, user_text), user_text=user_text)
                 tone = 'persona' if (action.get('category') or '').strip().lower() == 'persona' else 'normal'
                 self._add_action_indicator(result, tone=tone)
+        # If the AI already created the agenda via "actions", don't also show create-buttons
+        if agenda_acted:
+            self._auto_execute_next_single_agenda = False
+            self._allow_next_persona_save = False
+            self._continuation_pending_buttons = []
+            self._continuation_subject = ''
+            self._remove_thinking_orb()
+            return
         if buttons:
             actions = self._agenda_actions_from_buttons(buttons)
             if self._auto_execute_next_single_agenda and len(actions) == 1:
