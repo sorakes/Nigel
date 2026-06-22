@@ -1,5 +1,5 @@
 __doc__ = """
-core/storage.py — Armazenamento profissional para o SEQ.
+core/storage.py — Armazenamento do Nigel.
 Gerencia AppData, Keyring (Windows Credential Manager) e config.json.
 """
 
@@ -7,7 +7,7 @@ import os
 import json
 import keyring
 
-_APP_NAME = 'SEQ'
+_APP_NAME = 'Nigel'
 _CONFIG_FILE = 'config.json'
 
 def get_appdata_dir() -> str:
@@ -34,6 +34,21 @@ def save_config(data: dict) -> None:
     existing.update(data)
     with open(get_config_path(), 'w', encoding='utf-8') as f:
         json.dump(existing, f, indent=2, ensure_ascii=False)
+
+def _migrate_appdata():
+    """Migra dados da pasta antiga 'SEQ' para 'Nigel' caso existam."""
+    old_dir = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'SEQ')
+    new_dir = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'Nigel')
+    if os.path.isdir(old_dir) and not os.path.isdir(new_dir):
+        import shutil
+        try:
+            shutil.copytree(old_dir, new_dir)
+            print('[Nigel] Dados migrados de SEQ → Nigel com sucesso.')
+        except Exception as e:
+            print(f'[Nigel] Falha ao migrar dados: {e}')
+
+_migrate_appdata()
+
 
 def save_secret(service: str, key: str, value: str) -> None:
     try:

@@ -1,5 +1,5 @@
 """
-ui/agenda_skills.py — Sistema compartilhado de skills de agenda do SEQ.
+ui/agenda_skills.py — Sistema compartilhado de skills de agenda do Nigel.
 
 Usado pelo chat principal (Bar) e pelos popups de lembrete (ScheduleAlertDialog).
 A IA retorna JSON com actions/buttons; a UI nativa garante confirmação do usuário.
@@ -16,7 +16,7 @@ from PyQt6.QtCore import QTimer
 _CLOSING_ACTIONS = frozenset({'reschedule', 'delete_current', 'postpone', 'mark_done', 'delete_schedule'})
 
 _CHAT_SKILLS_DOC = '''
-## FERRAMENTAS DE AGENDA (lembretes locais do SEQ)
+## FERRAMENTAS DE AGENDA (lembretes locais do Nigel)
 
 Você pode ajudar o usuário a gerenciar lembretes e follow-ups no chat principal.
 
@@ -184,7 +184,7 @@ def resolve_schedule_id(action: dict, user_text: str = '', item: dict | None = N
     return None
 
 _NOTIFICATION_SKILLS_DOC = '''
-Você é o SEQ, assistente pessoal que gerencia a agenda do usuário neste popup de lembrete vencido.
+Você é o Nigel, assistente pessoal que gerencia a agenda do usuário neste popup de lembrete vencido.
 
 ## REGRAS DO POPUP
 1. O usuário está falando DIRETAMENTE sobre o lembrete em foco — quando ele pedir remarcar, adiar, concluir ou cancelar, coloque a ação no array "actions" para execução imediata (ele já confirmou ao digitar).
@@ -683,7 +683,7 @@ class AgendaSkillExecutor:
             'sender': '',
             'body_preview': note,
             'ai_summary': subject,
-            'ai_reason': f'Memória relevante capturada pelo SEQ ({category})',
+            'ai_reason': f'Memória relevante capturada pelo Nigel ({category})',
             'relevance_score': max(1, min(100, relevance)),
         }, saved_by='user')
         trigger_ui_update()

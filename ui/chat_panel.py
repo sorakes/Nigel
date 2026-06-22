@@ -160,9 +160,9 @@ class ChatPanel(QWidget):
         provider = self._api.get_active_provider()
         if provider:
             info = self._api.get_provider_info(provider)
-            self.provider_lbl.setText(f"✦ Seq  ·  {info.get('name', provider.title())}")
+            self.provider_lbl.setText(f"✦ Nigel  ·  {info.get('name', provider.title())}")
             return
-        self.provider_lbl.setText('✦ Seq  ·  ⚠ Configure um provider')
+        self.provider_lbl.setText('✦ Nigel  ·  ⚠ Configure um provider')
 
     def refresh_provider(self):
         self._api.reload()

@@ -1,5 +1,5 @@
 """
-core/scheduler.py — Gerenciador de Lembretes/Follow-ups do SEQ.
+core/scheduler.py — Gerenciador de Lembretes/Follow-ups do Nigel.
 
 Suporta criação manual e automática (via IA).
 Verifica schedules vencidos e emite signal para a UI.
@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.storage import get_appdata_dir
 
-_DB_FILE = 'seq.db'
+_DB_FILE = 'nigel.db'
 
 
 def parse_due_at(value: str | datetime | None) -> datetime:
@@ -186,7 +186,7 @@ class ScheduleCheckerWorker(QThread):
             return
         for item in pending:
             self._notified_due[item['id']] = item.get('due_at', '')
-        print(f"[SEQ] {len(pending)} lembrete(s) vencido(s) — abrindo popup(s)...")
+        print(f"[Nigel] {len(pending)} lembrete(s) vencido(s) — abrindo popup(s)...")
         self.overdue_found.emit(pending)
 
     def force_check(self):

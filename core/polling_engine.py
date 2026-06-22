@@ -1,5 +1,5 @@
 __doc__ = """
-core/polling_engine.py — Motor de leitura em background do SEQ.
+core/polling_engine.py — Motor de leitura em background do Nigel.
 
 Lê e-mails (Outlook + Gmail) a cada 60 segundos, classifica com a IA
 e só notifica a interface quando algo realmente importante aparecer.

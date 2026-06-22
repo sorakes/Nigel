@@ -574,9 +574,9 @@ class Bar(QWidget):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._BAR_W = int(os.getenv('SEQ_BAR_WIDTH', '600'))
-        self._BAR_H = int(os.getenv('SEQ_BAR_HEIGHT', '60'))
-        self._aot = os.getenv('SEQ_ALWAYS_ON_TOP', 'true').lower() != 'false'
+        self._BAR_W = int(os.getenv('NIGEL_BAR_WIDTH', '600'))
+        self._BAR_H = int(os.getenv('NIGEL_BAR_HEIGHT', '60'))
+        self._aot = os.getenv('NIGEL_ALWAYS_ON_TOP', 'true').lower() != 'false'
         self._collapsed = True
         self._expands_down = False
         self._drag_pos = None
@@ -785,7 +785,7 @@ class Bar(QWidget):
         items = db.get_saved_items()
         graph = db.get_knowledge_graph(limit=40)
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        sys_msg = 'Você é o assistente pessoal inteligente SEQ. Você tem acesso à seguinte memória (informações salvas) sobre o usuário e seu contexto:\n'
+        sys_msg = 'Você é o assistente pessoal inteligente Nigel. Você tem acesso à seguinte memória (informações salvas) sobre o usuário e seu contexto:\n'
         if not items:
             sys_msg += '- Nenhuma informação na memória ainda.\n'
         else:
@@ -828,13 +828,13 @@ class Bar(QWidget):
         return '\n'.join(lines) + '\n'
 
     def _review_history_for_draft(self, draft: str):
-        review_sys = 'Você é a camada de revisão crítica do SEQ antes da resposta aparecer ao usuário.\n\nRevise o rascunho abaixo e devolva APENAS a resposta final corrigida, incluindo JSON de ferramentas se necessário.\n\nChecklist obrigatório:\n- Antes de aprovar uma agenda que envolve pessoa/entidade/lugar/projeto citado pelo usuário, verifique a memória disponível no system prompt. Se o contexto ainda não é conhecido e isso pode importar para prioridade, privacidade, tom ou Persona, a resposta final DEVE usar `clarification` e colocar a agenda em `pending_buttons`.\n- Se o rascunho criou agenda envolvendo uma entidade ainda não compreendida e não usou `clarification`, corrija. Não deixe criar direto só porque a data/hora está clara.\n- Se o usuário está cancelando, remarcando, concluindo ou adiando lembrete existente, não transforme isso em curiosidade de Persona. Resolva a ação com agenda/memória/grafo; pergunte apenas se houver ambiguidade sobre qual lembrete.\n- Se o texto faz uma pergunta para entender uma pessoa/entidade antes de agir, a resposta final DEVE usar `clarification` e mover qualquer ação de agenda para `pending_buttons`. Não deixe `buttons` ativos nesse caso.\n- Se o rascunho menciona curiosidade ou dúvida mas também cria/atualiza agenda imediatamente, corrija para clarificação.\n- Se a ação depende de uma resposta do usuário, não use `create_schedule`, `update_schedule` ou `save_memory` ainda.\n- Em continuação interna, se o usuário não respondeu a curiosidade mas claramente quer prosseguir com a ação pendente, não repita a mesma pergunta. Conclua a ação pendente e deixe a curiosidade para outro momento.\n- Se salvar Persona, salve somente fatos úteis explicados pelo usuário; nunca salve só nome nem resposta crua.\n- Se não houver problema, mantenha a intenção original e o JSON válido.\n- Não explique a revisão. Não cite este checklist.\n'
+        review_sys = 'Você é a camada de revisão crítica do Nigel antes da resposta aparecer ao usuário.\n\nRevise o rascunho abaixo e devolva APENAS a resposta final corrigida, incluindo JSON de ferramentas se necessário.\n\nChecklist obrigatório:\n- Antes de aprovar uma agenda que envolve pessoa/entidade/lugar/projeto citado pelo usuário, verifique a memória disponível no system prompt. Se o contexto ainda não é conhecido e isso pode importar para prioridade, privacidade, tom ou Persona, a resposta final DEVE usar `clarification` e colocar a agenda em `pending_buttons`.\n- Se o rascunho criou agenda envolvendo uma entidade ainda não compreendida e não usou `clarification`, corrija. Não deixe criar direto só porque a data/hora está clara.\n- Se o usuário está cancelando, remarcando, concluindo ou adiando lembrete existente, não transforme isso em curiosidade de Persona. Resolva a ação com agenda/memória/grafo; pergunte apenas se houver ambiguidade sobre qual lembrete.\n- Se o texto faz uma pergunta para entender uma pessoa/entidade antes de agir, a resposta final DEVE usar `clarification` e mover qualquer ação de agenda para `pending_buttons`. Não deixe `buttons` ativos nesse caso.\n- Se o rascunho menciona curiosidade ou dúvida mas também cria/atualiza agenda imediatamente, corrija para clarificação.\n- Se a ação depende de uma resposta do usuário, não use `create_schedule`, `update_schedule` ou `save_memory` ainda.\n- Em continuação interna, se o usuário não respondeu a curiosidade mas claramente quer prosseguir com a ação pendente, não repita a mesma pergunta. Conclua a ação pendente e deixe a curiosidade para outro momento.\n- Se salvar Persona, salve somente fatos úteis explicados pelo usuário; nunca salve só nome nem resposta crua.\n- Se não houver problema, mantenha a intenção original e o JSON válido.\n- Não explique a revisão. Não cite este checklist.\n'
         hist = list(self._last_full_history)
         if hist and hist[0]['role'] == 'system':
-            hist[0] = {'role': 'system', 'content': review_sys + '\n\n=== REGRAS GERAIS DE FERRAMENTAS DO SEQ ===\n' + hist[0]['content']}
+            hist[0] = {'role': 'system', 'content': review_sys + '\n\n=== REGRAS GERAIS DE FERRAMENTAS DO NIGEL ===\n' + hist[0]['content']}
         else:
             hist.insert(0, {'role': 'system', 'content': review_sys})
-        return hist + [{'role': 'assistant', 'content': f"RASCUNHO A REVISAR:\n{draft}"}, {'role': 'user', 'content': 'Revise criticamente e entregue a resposta final do SEQ agora. OBRIGATÓRIO: A resposta final DEVE conter o bloco ```json ... ``` com as ferramentas se houver alguma ação/lembrete no rascunho.'}]
+        return hist + [{'role': 'assistant', 'content': f"RASCUNHO A REVISAR:\n{draft}"}, {'role': 'user', 'content': 'Revise criticamente e entregue a resposta final do Nigel agora. OBRIGATÓRIO: A resposta final DEVE conter o bloco ```json ... ``` com as ferramentas se houver alguma ação/lembrete no rascunho.'}]
 
     def _start_stream(self, phase: str = 'draft', messages: list[dict] | None = None):
         if self._worker and self._worker.isRunning():
@@ -1130,7 +1130,7 @@ class Bar(QWidget):
         self._continuation_pending_buttons = list(pending_buttons or [])
         self._continuation_subject = name
         pending_json = json.dumps(pending_buttons or [], ensure_ascii=False)
-        prompt = f"""[Continuação interna do SEQ]
+        prompt = f"""[Continuação interna do Nigel]
 Pedido original: {original_request}
 Entidade/contexto em aberto: {name}
 Pergunta que você já fez: {question}
@@ -1273,9 +1273,9 @@ OBRIGATÓRIO: A sua resposta final escrita deve ser curta e direta, e logo abaix
         provider = self._api.get_active_provider()
         if provider:
             info = self._api.get_provider_info(provider)
-            self.provider_lbl.setText(f"Seq  |  {info.get('name', provider.title())}")
+            self.provider_lbl.setText(f"Nigel  |  {info.get('name', provider.title())}")
             return
-        self.provider_lbl.setText('Seq  |  Configure um provider')
+        self.provider_lbl.setText('Nigel  |  Configure um provider')
 
     def _toggle_menu(self):
         if self._flyout is None:
@@ -1325,7 +1325,7 @@ OBRIGATÓRIO: A sua resposta final escrita deve ser curta e direta, e logo abaix
         self.show()
         self.raise_()
         from core.api_client import APIClient
-        APIClient().save_settings({'SEQ_ALWAYS_ON_TOP': 'true' if enabled else 'false'})
+        APIClient().save_settings({'NIGEL_ALWAYS_ON_TOP': 'true' if enabled else 'false'})
 
     def _toggle_brain(self):
         self.brain_btn.clear_badge()

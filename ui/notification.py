@@ -1,5 +1,5 @@
 """
-ui/notification.py — Popup de lembrete premium do SEQ com Skills de Agenda.
+ui/notification.py — Popup de lembrete do Nigel com Skills de Agenda.
 
 ScheduleAlertDialog:
 - Aparece no canto superior direito
@@ -111,7 +111,7 @@ class ScheduleAlertDialog(QWidget):
         pop.show()
         pop.raise_()
         pop.activateWindow()
-        print(f"[SEQ] Popup exibido: id={sid} — {item.get('title', '')[:50]}")
+        print(f"[Nigel] Popup exibido: id={sid} — {item.get('title', '')[:50]}")
 
     def __init__(self, item: dict):
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
@@ -432,9 +432,9 @@ class ScheduleAlertDialog(QWidget):
         for msg in self._history:
             if msg['role'] == 'system':
                 continue
-            role = 'SEQ' if msg['role'] == 'assistant' else 'Você'
+            role = 'Nigel' if msg['role'] == 'assistant' else 'Você'
             content = msg['content']
-            if role == 'SEQ':
+            if role == 'Nigel':
                 content = self._visible_text(content) or '[Gerou ações/botões]'
             chat_lines.append(f"{role}: {content}")
         transcript = '\n\n'.join(chat_lines)

@@ -4,10 +4,20 @@ Sem emoji nem cores saturadas; traço fino dourado.
 """
 from __future__ import annotations
 import math
+import os
 from PyQt6.QtCore import Qt, QRectF, pyqtSignal, QPointF
-from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QFont
+from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QFont, QPixmap
 from PyQt6.QtWidgets import QWidget
 from ui.theme import C_GOLD, C_GOLD_BRIGHT, C_GOLD_DEEP, C_TEXT, C_TEXT_MID, FONT
+
+_NIGEL_ICON_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'nigel.png')
+_nigel_pixmap: QPixmap | None = None
+
+def _get_nigel_pixmap() -> QPixmap | None:
+    global _nigel_pixmap
+    if _nigel_pixmap is None and os.path.exists(_NIGEL_ICON_PATH):
+        _nigel_pixmap = QPixmap(_NIGEL_ICON_PATH)
+    return _nigel_pixmap
 
 def _pen(color: QColor, w: float = 1.45) -> QPen:
     return QPen(color, w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
@@ -255,7 +265,14 @@ class BrainButton(QWidget):
             p.setBrush(Qt.GlobalColor.transparent)
             p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(0, 0, self.width(), self.height(), 8, 8)
-        paint_icon(p, QRectF(4, 4, 24, 24), 'brain', C_GOLD_BRIGHT)
+        pix = _get_nigel_pixmap()
+        if pix and not pix.isNull():
+            scaled = pix.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            x = (self.width() - scaled.width()) // 2
+            y = (self.height() - scaled.height()) // 2
+            p.drawPixmap(x, y, scaled)
+        else:
+            paint_icon(p, QRectF(4, 4, 24, 24), 'brain', C_GOLD_BRIGHT)
         if self._badge > 0:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(C_GOLD_BRIGHT)

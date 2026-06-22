@@ -1,5 +1,5 @@
 """
-main.py — Seq Widget entry point.
+main.py — Nigel entry point.
 """
 
 import sys
@@ -9,6 +9,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, QTimer
 
 from ui.bar import Bar
@@ -25,14 +26,18 @@ def _handle_overdue(items: list, bar: Bar):
 
 def _handle_important_email(item: dict, bar: Bar, source: str):
     summary = item.get('ai_summary') or item.get('subject', '')
-    print(f"[SEQ] ⚡ {source}: {summary}")
+    print(f"[Nigel] ⚡ {source}: {summary}")
     bar.brain_btn.set_badge(bar.brain_btn._badge + 1)
 
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Seq")
-    app.setApplicationDisplayName("Seq")
+    app.setApplicationName("Nigel")
+    app.setApplicationDisplayName("Nigel")
+
+    _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'nigel.ico')
+    if os.path.exists(_icon_path):
+        app.setWindowIcon(QIcon(_icon_path))
 
     # Don't quit when the last (visible) window is closed —
     # the bar is the root window and must stay alive.
@@ -64,13 +69,13 @@ def main():
         lambda items, b=bar: _handle_overdue(items, b),
         Qt.ConnectionType.QueuedConnection)
     bar.set_schedule_checker(schedule_checker)
-    print("[SEQ] Starting checker worker...")
+    print("[Nigel] Starting checker worker...")
     schedule_checker.start()
     app._workers.append(schedule_checker)
     # Segunda checagem após a UI estar pronta
     QTimer.singleShot(800, schedule_checker.force_check)
 
-    print("[SEQ] Entering app.exec()...")
+    print("[Nigel] Entering app.exec()...")
     sys.exit(app.exec())
 
 if __name__ == "__main__":

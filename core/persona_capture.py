@@ -1,7 +1,7 @@
 __doc__ = """
 core/persona_capture.py - Compatibilidade para captura de Persona.
 
-Persona não deve ser inferida por listas ou padrões locais. O SEQ precisa usar
+Persona não deve ser inferida por listas ou padrões locais. O Nigel precisa usar
 a IA para decidir quando perguntar, salvar ou ignorar um detalhe subjetivo.
 """
 

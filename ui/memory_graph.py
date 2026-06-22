@@ -1,6 +1,6 @@
 from __future__ import annotations
 """
-ui/memory_graph.py - Grafo de memoria estilo Obsidian para o SEQ.
+ui/memory_graph.py - Grafo de memoria estilo Obsidian para o Nigel.
 
 Foco desta versao:
 - Visual limpo e leve, mais proximo do Obsidian.

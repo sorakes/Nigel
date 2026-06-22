@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
                              QScrollArea, QFrame, QLineEdit, QDialog,
                              QDateTimeEdit, QTextEdit, QApplication)
 from PyQt6.QtCore import Qt, QDateTime, QTimer
-from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont
+from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QPixmap
 from ui.theme import (paint_panel, C_PANEL, C_GOLD, C_TEXT, C_TEXT_MID, TEXT_CSS,
                       TEXT_MID_CSS, GOLD_BRIGHT_CSS, FONT, BTN_PRIMARY,
                       BTN_CLOSE, LABEL_SECTION, LABEL_SMALL, SCROLL_STYLE)
@@ -404,8 +404,14 @@ class BrainPanel(QWidget):
         layout.setSpacing(0)
         title_row = QHBoxLayout()
         title_row.setContentsMargins(20, 14, 16, 0)
-        title_icon = IconWidget('brain', 16)
-        title = QLabel('SEQ Intelligence')
+        import os
+        _duck_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'nigel.png')
+        title_icon = QLabel()
+        if os.path.exists(_duck_path):
+            _pix = QPixmap(_duck_path).scaled(20, 20, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            title_icon.setPixmap(_pix)
+        title_icon.setFixedSize(20, 20)
+        title = QLabel('Nigel Intelligence')
         title.setStyleSheet(f"color: {GOLD_BRIGHT_CSS}; font-family: {FONT}; font-size: 14px; font-weight: bold;")
         close_btn = IconButton('close', 26, 'Fechar')
         close_btn.clicked.connect(self.hide)

@@ -14,7 +14,7 @@ PROVIDERS: dict[str, dict] = {
     'groq': {
         'name': 'Groq',
         'base_url': 'https://api.groq.com/openai/v1',
-        'env_key': 'SEQ_GROQ_API_KEY',
+        'env_key': 'NIGEL_GROQ_API_KEY',
         'default_model': 'llama-3.1-70b-versatile',
         'models': ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
         'type': 'openai_compat'
@@ -22,7 +22,7 @@ PROVIDERS: dict[str, dict] = {
     'openai': {
         'name': 'OpenAI',
         'base_url': 'https://api.openai.com/v1',
-        'env_key': 'SEQ_OPENAI_API_KEY',
+        'env_key': 'NIGEL_OPENAI_API_KEY',
         'default_model': 'gpt-4o-mini',
         'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
         'type': 'openai_compat'
@@ -30,7 +30,7 @@ PROVIDERS: dict[str, dict] = {
     'gemini': {
         'name': 'Gemini',
         'base_url': 'https://generativelanguage.googleapis.com/v1beta',
-        'env_key': 'SEQ_GEMINI_API_KEY',
+        'env_key': 'NIGEL_GEMINI_API_KEY',
         'default_model': 'gemini-1.5-flash',
         'models': ['gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'],
         'type': 'gemini'
@@ -38,7 +38,7 @@ PROVIDERS: dict[str, dict] = {
     'openrouter': {
         'name': 'OpenRouter',
         'base_url': 'https://openrouter.ai/api/v1',
-        'env_key': 'SEQ_OPENROUTER_API_KEY',
+        'env_key': 'NIGEL_OPENROUTER_API_KEY',
         'default_model': 'meta-llama/llama-3.1-8b-instruct:free',
         'models': ['meta-llama/llama-3.1-8b-instruct:free', 'anthropic/claude-3.5-sonnet'],
         'type': 'openai_compat'
@@ -46,7 +46,7 @@ PROVIDERS: dict[str, dict] = {
     'ollama': {
         'name': 'Ollama (Local)',
         'base_url': None,
-        'env_key': 'SEQ_OLLAMA_URL',
+        'env_key': 'NIGEL_OLLAMA_URL',
         'default_model': 'llama3',
         'models': [],
         'type': 'ollama'
@@ -92,15 +92,15 @@ class StreamWorker(QThread):
         cfg = PROVIDERS[self.provider]
         api_key = os.getenv(cfg['env_key'], '').strip()
         base_url = cfg['base_url']
-        env_model_key = f"SEQ_{self.provider.upper()}_MODEL"
+        env_model_key = f"NIGEL_{self.provider.upper()}_MODEL"
         model = self.model or os.getenv(env_model_key, '').strip() or cfg['default_model']
         headers = {
             'Authorization': f"Bearer {api_key}",
             'Content-Type': 'application/json'
         }
         if self.provider == 'openrouter':
-            headers['HTTP-Referer'] = 'https://github.com/seq-widget'
-            headers['X-Title'] = 'Seq Widget'
+            headers['HTTP-Referer'] = 'https://github.com/nigel-widget'
+            headers['X-Title'] = 'Nigel'
         payload = {
             'model': model,
             'messages': self.messages,
@@ -135,8 +135,8 @@ class StreamWorker(QThread):
                     continue
 
     def _run_gemini(self):
-        api_key = os.getenv('SEQ_GEMINI_API_KEY', '').strip()
-        model = self.model or os.getenv('SEQ_GEMINI_MODEL', '').strip() or PROVIDERS['gemini']['default_model']
+        api_key = os.getenv('NIGEL_GEMINI_API_KEY', '').strip()
+        model = self.model or os.getenv('NIGEL_GEMINI_MODEL', '').strip() or PROVIDERS['gemini']['default_model']
         system_parts = []
         contents = []
         for msg in self.messages:
@@ -175,8 +175,8 @@ class StreamWorker(QThread):
                     continue
 
     def _run_ollama(self):
-        base_url = os.getenv('SEQ_OLLAMA_URL', 'http://localhost:11434').rstrip('/')
-        model = self.model or os.getenv('SEQ_OLLAMA_MODEL', 'llama3')
+        base_url = os.getenv('NIGEL_OLLAMA_URL', 'http://localhost:11434').rstrip('/')
+        model = self.model or os.getenv('NIGEL_OLLAMA_MODEL', 'llama3')
         payload = {
             'model': model,
             'messages': self.messages,
@@ -217,9 +217,9 @@ class APIClient:
     def get_active_provider(self) -> str | None:
         """
         Gets the currently active and configured provider.
-        Priority: SEQ_ACTIVE_PROVIDER > first available provider.
+        Priority: NIGEL_ACTIVE_PROVIDER > first available provider.
         """
-        explicit = os.getenv('SEQ_ACTIVE_PROVIDER', '').strip()
+        explicit = os.getenv('NIGEL_ACTIVE_PROVIDER', '').strip()
         if explicit and explicit in PROVIDERS:
             if self._provider_has_credentials(explicit):
                 return explicit
@@ -252,19 +252,19 @@ class APIClient:
         """Returns a dictionary of all current settings from the environment."""
         load_dotenv(override=True)
         return {
-            'SEQ_ACTIVE_PROVIDER': os.getenv('SEQ_ACTIVE_PROVIDER', ''),
-            'SEQ_GROQ_API_KEY': os.getenv('SEQ_GROQ_API_KEY', ''),
-            'SEQ_OPENAI_API_KEY': os.getenv('SEQ_OPENAI_API_KEY', ''),
-            'SEQ_GEMINI_API_KEY': os.getenv('SEQ_GEMINI_API_KEY', ''),
-            'SEQ_OPENROUTER_API_KEY': os.getenv('SEQ_OPENROUTER_API_KEY', ''),
-            'SEQ_OLLAMA_URL': os.getenv('SEQ_OLLAMA_URL', ''),
-            'SEQ_GROQ_MODEL': os.getenv('SEQ_GROQ_MODEL', PROVIDERS['groq']['default_model']),
-            'SEQ_OPENAI_MODEL': os.getenv('SEQ_OPENAI_MODEL', PROVIDERS['openai']['default_model']),
-            'SEQ_GEMINI_MODEL': os.getenv('SEQ_GEMINI_MODEL', PROVIDERS['gemini']['default_model']),
-            'SEQ_OPENROUTER_MODEL': os.getenv('SEQ_OPENROUTER_MODEL', PROVIDERS['openrouter']['default_model']),
-            'SEQ_OLLAMA_MODEL': os.getenv('SEQ_OLLAMA_MODEL', PROVIDERS['ollama']['default_model']),
-            'SEQ_BAR_WIDTH': os.getenv('SEQ_BAR_WIDTH', '600'),
-            'SEQ_BAR_HEIGHT': os.getenv('SEQ_BAR_HEIGHT', '60')
+            'NIGEL_ACTIVE_PROVIDER': os.getenv('NIGEL_ACTIVE_PROVIDER', ''),
+            'NIGEL_GROQ_API_KEY': os.getenv('NIGEL_GROQ_API_KEY', ''),
+            'NIGEL_OPENAI_API_KEY': os.getenv('NIGEL_OPENAI_API_KEY', ''),
+            'NIGEL_GEMINI_API_KEY': os.getenv('NIGEL_GEMINI_API_KEY', ''),
+            'NIGEL_OPENROUTER_API_KEY': os.getenv('NIGEL_OPENROUTER_API_KEY', ''),
+            'NIGEL_OLLAMA_URL': os.getenv('NIGEL_OLLAMA_URL', ''),
+            'NIGEL_GROQ_MODEL': os.getenv('NIGEL_GROQ_MODEL', PROVIDERS['groq']['default_model']),
+            'NIGEL_OPENAI_MODEL': os.getenv('NIGEL_OPENAI_MODEL', PROVIDERS['openai']['default_model']),
+            'NIGEL_GEMINI_MODEL': os.getenv('NIGEL_GEMINI_MODEL', PROVIDERS['gemini']['default_model']),
+            'NIGEL_OPENROUTER_MODEL': os.getenv('NIGEL_OPENROUTER_MODEL', PROVIDERS['openrouter']['default_model']),
+            'NIGEL_OLLAMA_MODEL': os.getenv('NIGEL_OLLAMA_MODEL', PROVIDERS['ollama']['default_model']),
+            'NIGEL_BAR_WIDTH': os.getenv('NIGEL_BAR_WIDTH', '600'),
+            'NIGEL_BAR_HEIGHT': os.getenv('NIGEL_BAR_HEIGHT', '60')
         }
 
     def save_settings(self, new_values: dict):
@@ -280,7 +280,7 @@ class APIClient:
                         existing[k.strip()] = v.strip()
         existing.update(new_values)
         with open(env_path, 'w', encoding='utf-8') as f:
-            f.write('# Seq Widget — configurações geradas automaticamente\n\n')
+            f.write('# Nigel — configurações geradas automaticamente\n\n')
             for (k, v) in existing.items():
                 f.write(f"{k}={v}\n")
         load_dotenv(dotenv_path=env_path, override=True)

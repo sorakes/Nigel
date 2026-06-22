@@ -1,5 +1,5 @@
 """
-core/database.py — Banco de dados local SQLite para o SEQ.
+core/database.py — Banco de dados local SQLite do Nigel.
 
 Filosofia:
 - 'seen_ids': tabela leve (só IDs) para deduplicação. Nenhum conteúdo salvo.
@@ -14,11 +14,11 @@ import hashlib
 from datetime import datetime
 from core.storage import get_appdata_dir
 
-_DB_FILE = 'seq.db'
+_DB_FILE = 'nigel.db'
 
-class SeqDB:
+class NigelDB:
     __module__ = __name__
-    __qualname__ = 'SeqDB'
+    __qualname__ = 'NigelDB'
     _instance = None
 
     @classmethod
@@ -424,3 +424,7 @@ class SeqDB:
             score = max(1, min(100, int(score)))
             self.conn.execute('UPDATE saved_items SET relevance_score = ? WHERE id = ?', (score, item_id))
         self.conn.commit()
+
+
+# Alias de compatibilidade
+SeqDB = NigelDB

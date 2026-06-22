@@ -103,7 +103,7 @@ def _call_openai_compat(api_key, base_url, model, messages, provider):
 
     if provider == 'openrouter':
         headers['HTTP-Referer'] = 'https://github.com/seq-widget'
-        headers['X-Title'] = 'SEQ Assistant'
+        headers['X-Title'] = 'Nigel'
 
     resp = requests.post(
         f"{base_url}/chat/completions",
@@ -127,7 +127,7 @@ def _call_gemini(api_key, model, messages):
     return resp.json()['candidates'][0]['content']['parts'][0]['text']
 
 def _call_ollama(model, messages):
-    base_url = os.getenv('SEQ_OLLAMA_URL', 'http://localhost:11434').rstrip('/')
+    base_url = os.getenv('NIGEL_OLLAMA_URL', 'http://localhost:11434').rstrip('/')
     resp = requests.post(
         f"{base_url}/api/chat",
         json={"model": model, "messages": messages, "stream": False},
