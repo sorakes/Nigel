@@ -237,11 +237,47 @@ class APIClient:
         """Returns the configuration dictionary for a given provider."""
         return PROVIDERS.get(provider, {})
 
+    def resolve_runtime(self, provider: str | None = None) -> dict:
+        """
+        Same provider/model/key resolution as StreamWorker — used by gate, compliance, graph, triage.
+        """
+        load_dotenv(override=True)
+        active = provider or self.get_active_provider()
+        if not active:
+            raise ValueError('Nenhum provider LLM configurado.')
+        info = PROVIDERS[active]
+        api_key = (os.getenv(info['env_key']) or '').strip()
+        if not api_key:
+            from core.storage import load_config
+            api_key = (load_config().get(f'api_key_{active}') or '').strip()
+        env_model_key = f'NIGEL_{active.upper()}_MODEL'
+        model = (os.getenv(env_model_key) or '').strip() or (info.get('default_model') or '')
+        base_url = info.get('base_url') or ''
+        if active == 'ollama':
+            base_url = os.getenv('NIGEL_OLLAMA_URL', 'http://localhost:11434').rstrip('/')
+        return {
+            'provider': active,
+            'type': info['type'],
+            'api_key': api_key,
+            'base_url': base_url,
+            'model': model,
+        }
+
+    def call_llm(self, messages: list[dict], max_tokens: int = 512, provider: str | None = None) -> str:
+        """Non-streaming LLM call using the active provider (same config as chat)."""
+        rt = self.resolve_runtime(provider)
+        ptype = rt['type']
+        if ptype == 'openai_compat':
+            return _openai_compat_completion(
+                rt['api_key'], rt['base_url'], rt['model'], messages, rt['provider'], max_tokens
+            )
+        if ptype == 'gemini':
+            return _gemini_completion(rt['api_key'], rt['model'], messages, max_tokens)
+        if ptype == 'ollama':
+            return _ollama_completion(rt['base_url'], rt['model'], messages, max_tokens)
+        raise ValueError(f"Provider não suportado: {rt['provider']}")
+
     def create_worker(self, messages: list[dict], provider: str | None = None, model: str | None = None) -> StreamWorker:
-        """
-        Creates and returns a StreamWorker for the given provider and messages.
-        If provider is not specified, it uses the active provider.
-        """
         if provider is None:
             provider = self.get_active_provider()
         if provider is None:
@@ -249,7 +285,6 @@ class APIClient:
         return StreamWorker(provider, messages, model)
 
     def get_settings(self) -> dict:
-        """Returns a dictionary of all current settings from the environment."""
         load_dotenv(override=True)
         return {
             'NIGEL_ACTIVE_PROVIDER': os.getenv('NIGEL_ACTIVE_PROVIDER', ''),
@@ -264,11 +299,10 @@ class APIClient:
             'NIGEL_OPENROUTER_MODEL': os.getenv('NIGEL_OPENROUTER_MODEL', PROVIDERS['openrouter']['default_model']),
             'NIGEL_OLLAMA_MODEL': os.getenv('NIGEL_OLLAMA_MODEL', PROVIDERS['ollama']['default_model']),
             'NIGEL_BAR_WIDTH': os.getenv('NIGEL_BAR_WIDTH', '600'),
-            'NIGEL_BAR_HEIGHT': os.getenv('NIGEL_BAR_HEIGHT', '60')
+            'NIGEL_BAR_HEIGHT': os.getenv('NIGEL_BAR_HEIGHT', '60'),
         }
 
     def save_settings(self, new_values: dict):
-        """Saves a dictionary of settings to the .env file."""
         env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
         existing = {}
         if os.path.exists(env_path):
@@ -281,6 +315,62 @@ class APIClient:
         existing.update(new_values)
         with open(env_path, 'w', encoding='utf-8') as f:
             f.write('# Nigel — configurações geradas automaticamente\n\n')
-            for (k, v) in existing.items():
-                f.write(f"{k}={v}\n")
+            for k, v in existing.items():
+                f.write(f'{k}={v}\n')
         load_dotenv(dotenv_path=env_path, override=True)
+
+
+def _openai_compat_headers(provider: str, api_key: str) -> dict:
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
+    }
+    if provider == 'openrouter':
+        headers['HTTP-Referer'] = 'https://github.com/nigel-widget'
+        headers['X-Title'] = 'Nigel'
+    return headers
+
+
+def _openai_compat_completion(api_key, base_url, model, messages, provider, max_tokens=512) -> str:
+    base_url = (base_url or '').rstrip('/')
+    resp = requests.post(
+        f'{base_url}/chat/completions',
+        headers=_openai_compat_headers(provider, api_key),
+        json={'model': model, 'messages': messages, 'max_tokens': max_tokens, 'stream': False},
+        timeout=60,
+    )
+    if not resp.ok:
+        detail = resp.text[:300] if resp.text else resp.reason
+        raise requests.HTTPError(f'{resp.status_code} {detail}', response=resp)
+    content = resp.json()['choices'][0]['message'].get('content') or ''
+    return content
+
+
+def _gemini_completion(api_key, model, messages, max_tokens=512) -> str:
+    system_parts = []
+    contents = []
+    for msg in messages:
+        role = msg.get('role', 'user')
+        if role == 'system':
+            system_parts.append(msg['content'])
+            continue
+        gemini_role = 'user' if role == 'user' else 'model'
+        contents.append({'role': gemini_role, 'parts': [{'text': msg['content']}]})
+    payload = {'contents': contents, 'generationConfig': {'maxOutputTokens': max_tokens}}
+    if system_parts:
+        payload['systemInstruction'] = {'parts': [{'text': '\n\n'.join(system_parts)}]}
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}'
+    resp = requests.post(url, json=payload, timeout=60)
+    resp.raise_for_status()
+    parts = resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])
+    return (parts[0].get('text') if parts else '') or ''
+
+
+def _ollama_completion(base_url, model, messages, max_tokens=512) -> str:
+    resp = requests.post(
+        f'{base_url.rstrip("/")}/api/chat',
+        json={'model': model, 'messages': messages, 'stream': False, 'options': {'num_predict': max_tokens}},
+        timeout=90,
+    )
+    resp.raise_for_status()
+    return resp.json()['message']['content']

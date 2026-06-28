@@ -15,6 +15,58 @@ from core.database import SeqDB
 
 _POLL_INTERVAL = 60
 
+class ComplianceAuditWorker(QThread):
+    __doc__ = 'Auditoria final: a IA principal seguiu as regras? Agenda foi emitida?'
+
+    result_ready = pyqtSignal(dict)
+
+    def __init__(self, user_text: str, assistant_reply: str, gate_mode: str,
+                 learned_facts: list | None = None, detective_original: str = ''):
+        super().__init__()
+        self._user_text = user_text
+        self._assistant_reply = assistant_reply
+        self._gate_mode = gate_mode
+        self._learned_facts = learned_facts or []
+        self._detective_original = detective_original
+
+    def run(self):
+        try:
+            from core.chat_compliance import audit
+            result = audit(
+                self._user_text,
+                self._assistant_reply,
+                gate_mode=self._gate_mode,
+                learned_facts=self._learned_facts,
+                detective_original=self._detective_original,
+            )
+            self.result_ready.emit(result)
+        except Exception as e:
+            print(f"[Nigel] ComplianceAuditWorker erro: {e}")
+            from core.chat_compliance import _local_audit
+            self.result_ready.emit(_local_audit(self._assistant_reply, self._gate_mode))
+
+class IntentGateWorker(QThread):
+    __doc__ = 'Camada final: decide se a resposta é agenda, curiosidade ou conversa.'
+
+    result_ready = pyqtSignal(dict)
+
+    def __init__(self, user_text: str, assistant_reply: str, learned_facts: list | None = None):
+        super().__init__()
+        self._user_text = user_text
+        self._assistant_reply = assistant_reply
+        self._learned_facts = learned_facts or []
+
+    def run(self):
+        try:
+            from core.chat_intent_gate import evaluate
+            result = evaluate(self._user_text, self._assistant_reply, self._learned_facts)
+            if result is None:
+                result = {'mode': 'conversation', 'persona_ui': False, 'curiosity_subject': '', 'needs_tool_fix': False, 'fix_hint': ''}
+            self.result_ready.emit(result)
+        except Exception as e:
+            print(f"[Nigel] IntentGateWorker erro: {e}")
+            self.result_ready.emit({'mode': 'conversation', 'persona_ui': False, 'curiosity_subject': '', 'needs_tool_fix': False, 'fix_hint': ''})
+
 class GraphAnalysisWorker(QThread):
     __doc__ = 'Pede para a IA pensar nas relações do grafo de conhecimento (em background).'
 

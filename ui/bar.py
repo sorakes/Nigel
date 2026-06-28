@@ -21,7 +21,7 @@ from ui.icons import BrainButton, IconButton
 
 class ThinkingOrb(QWidget):
     """Indicador fluido: 3 gotas quicando, com transição de cor e dissolução."""
-    COLORS = {'thinking': (QColor(212, 175, 80), QColor(240, 212, 110)), 'review': (QColor(156, 104, 230), QColor(205, 158, 255)), 'tool': (QColor(74, 192, 118), QColor(150, 235, 175)), 'idle': (QColor(212, 175, 80), QColor(240, 212, 110))}
+    COLORS = {'thinking': (QColor(212, 175, 80), QColor(240, 212, 110)), 'review': (QColor(156, 104, 230), QColor(205, 158, 255)), 'gate': (QColor(72, 168, 148), QColor(130, 220, 200)), 'audit': (QColor(220, 140, 70), QColor(255, 190, 120)), 'tool': (QColor(74, 192, 118), QColor(150, 235, 175)), 'idle': (QColor(212, 175, 80), QColor(240, 212, 110))}
     _DT = 0.016
     _PERIOD = 0.62
     _AMP = 15.0
@@ -244,7 +244,7 @@ class ThinkingOrb(QWidget):
 
 class MessageBubble(QFrame):
 
-    def __init__(self, text: str, is_user: bool = False, is_error: bool = False, tone: str = 'normal', parent=None):
+    def __init__(self, text: str, is_user: bool = False, is_error: bool = False, tone: str = 'normal', max_width: int = 420, parent=None):
         super().__init__(parent)
         self.is_user = is_user
         self.is_error = is_error
@@ -272,7 +272,7 @@ class MessageBubble(QFrame):
         self.label.setWordWrap(True)
         self.label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        self.label.setMaximumWidth(420)
+        self.label.setMaximumWidth(max_width)
         self.label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.label.setStyleSheet(f"QLabel {{ color:{txt_css}; padding:10px 14px; font-size:13px; font-family:{FONT}; line-height:1.5; background:transparent; }}")
         if is_user:
@@ -600,6 +600,24 @@ class Bar(QWidget):
         self._continuation_subject = ''
         self._auto_execute_next_single_agenda = False
         self._allow_next_persona_save = False
+        self._gate_worker = None
+        self._compliance_worker = None
+        self._compliance_must_execute = False
+        self._compliance_fix_attempts = 0
+        self._gate_mode = 'conversation'
+        self._gate_persona_ui = False
+        self._gate_curiosity_subject = ''
+        self._review_buf = ''
+        self._tool_fix_attempts = 0
+        self._force_execute_after_clarification = False
+        self._detective_original_request = ''
+        self._detective_pending_buttons = []
+        self._detective_learned = []
+        self._response_revealed = False
+        self._reveal_safety_timer = QTimer(self)
+        self._reveal_safety_timer.setSingleShot(True)
+        self._reveal_safety_timer.timeout.connect(self._on_reveal_safety_timeout)
+        self._pending_reveal = None
         self._brain = None
         self._agenda_executor = None
         self._drag_filter = DragFilter(self)
@@ -767,6 +785,12 @@ class Bar(QWidget):
 
     def _send_message(self, text: str):
         self._clear_dynamic_buttons()
+        if self._gate_worker is not None and self._gate_worker.isRunning():
+            self._gate_worker.wait(2000)
+            self._gate_worker = None
+        if self._compliance_worker is not None and self._compliance_worker.isRunning():
+            self._compliance_worker.wait(2000)
+            self._compliance_worker = None
         self._add_bubble(text, is_user=True)
         self._history.append({'role': 'user', 'content': text})
         self._last_user_text = text
@@ -801,17 +825,22 @@ class Bar(QWidget):
         sys_msg += (
             "\nIf the user asks something about themselves or about information in the memory above, answer naturally using that data.\n\n"
             "You also act as a personal knowledge engine:\n"
+            "- Your memory must grow through detective curiosity. Scan every request for ALL unknown people, "
+            "places, objects, relationships and context — not just the first name. Ask one question per turn "
+            "(purple bubble), save answers, keep asking until enough is known, THEN schedule.\n"
             "- During the conversation, notice relevant facts worth adding to the user's memory graph.\n"
             "- Value small details with future value: important people, preferences, recurring problems, work context, important messages, relevant meetings, broken objects, commitments and decisions.\n"
             "- When you detect something relevant, use save_memory in the tools JSON as described below.\n"
             "- Do not invent data. Only save what the user stated or what is clearly in context.\n"
-            "- The app is global: never assume data about a person that is not in memory or in the current message.\n"
-            "- If a new person appears in an important context, act like an agent: show interest, ask who they are, and only then treat them as known.\n"
-            "- On first contact with a person/entity tied to an event, visit, message, commitment or personal decision, prefer a short context question before running the agenda — unless the user already explained who/what it is.\n"
+            "- The app is global: never assume data about a person, place or thing that is not in memory or in the current message.\n"
             "- Do NOT let persona curiosity block objective commands about existing reminders (cancel, reschedule, complete, postpone). In those cases use the agenda and the graph/memory/chat to resolve the reference, and only ask if needed to pick the right reminder.\n"
             "- A bare name is not persona. Persona needs a relationship, preference, habit, role or clear fact stated by the user.\n"
-            "- Your intelligence must grow through good short questions, never through assumptions or fixed lists. Understand subjective answers in any language.\n"
-            "- When your critical analysis concludes you need to know an entity better before acting, use clarification in the tools JSON and move any pending action into pending_buttons.\n"
+            "- Your intelligence grows through good questions at the right moment, never through assumptions or fixed lists.\n"
+            "- TWO UI MODES — keep them separate:\n"
+            "  • Curiosity mode (PURPLE bubble): unknown person/place/thing in memory → ask with clarification JSON. Nothing scheduled yet unless already done before.\n"
+            "  • Schedule mode (normal bubble): enough context → agenda action in actions. Runs immediately.\n"
+            "  When curious, ALWAYS emit clarification in the JSON so the app shows the purple bubble.\n"
+            "- After a clarification answer, save useful facts with save_memory, then complete any pending agenda.\n"
             "- After a clarification answer, judge whether it actually teaches something useful. Never save raw answers like \"no\", \"yes\", \"maybe\" or context-free phrases.\n"
             "- If the answer opens another relevant gap, ask one more short question before saving. Do not use invented examples or names.\n\n"
             f"{build_chat_agenda_prompt(now)}\n"
@@ -846,40 +875,50 @@ class Bar(QWidget):
 
     def _review_history_for_draft(self, draft: str):
         review_sys = (
-            "You are Nigel's critical review layer, running before the reply is shown to the user. "
-            "Review the draft below and return ONLY the corrected final reply, including the tools JSON when needed. "
-            "Write the user-facing text in the user's language (usually Portuguese).\n\n"
-            "Mandatory checklist:\n"
-            "- THE GOLDEN RULE: if the draft promises a scheduling action (created/updated/rescheduled/postponed/completed a reminder) but has no JSON tool block, ADD the correct JSON block. A reminder without JSON does not exist.\n"
-            "- Before approving an agenda action involving a person/entity/place/project mentioned by the user, check the memory in the system prompt. If the context is still unknown and could matter for priority, privacy, tone or persona, the final reply MUST use clarification and move the agenda into pending_buttons.\n"
-            "- If the draft created an agenda action for an entity that is not yet understood and did not use clarification, fix it. Do not create directly just because the date/time is clear.\n"
-            "- If the user is canceling, rescheduling, completing or postponing an existing reminder, do NOT turn it into persona curiosity. Resolve the action with the agenda/memory/graph; ask only if it is ambiguous which reminder.\n"
-            "- If the text asks a question to understand a person/entity before acting, the final reply MUST use clarification and move any agenda action into pending_buttons. Do not leave active buttons in that case.\n"
-            "- If the draft mentions curiosity or doubt but also creates/updates the agenda immediately, fix it to a clarification.\n"
-            "- If the action depends on a user answer, do not use create_schedule, update_schedule or save_memory yet.\n"
-            "- In an internal continuation, if the user did not answer the curiosity but clearly wants to proceed with the pending action, do not repeat the same question. Complete the pending action and leave the curiosity for later.\n"
-            "- When saving persona, save only useful facts the user explained; never save just a name or a raw answer.\n"
-            "- If there is no problem, keep the original intent and valid JSON.\n"
-            "- Do not explain the review. Do not cite this checklist.\n"
+            "You are Nigel's review layer, running before the reply is shown to the user. "
+            "Read the user's message and the draft below. Return ONLY the corrected final reply "
+            "(user-facing text in their language + tools JSON when needed).\n\n"
+            "Your job is to align the reply with what the user actually needs right now:\n"
+            "- If they want something on the agenda and the intent/time are understandable, the reply "
+            "must include the agenda tool JSON in \"actions\" — plain words alone do not create reminders.\n"
+            "- If the request names someone/something important and that is not in memory, shift to curiosity: clarification + pending_buttons, NOT actions.\n"
+            "- After ONE answer, scan the ORIGINAL request again — places, objects, ownership, timelines may still be unknown. Keep asking (purple) before scheduling.\n"
+            "- If Nigel asks the user to teach who/what something is, include clarification JSON so the app shows the purple bubble.\n"
+            "- If the user asks a question (who is X?) and X is not in memory, answer briefly then ask them to teach you — with clarification JSON and persona_ui moment.\n"
+            "- Never emit mark_done, delete_schedule or reschedule unless the user explicitly asked to change an existing reminder.\n"
+            "- If the user is managing an existing reminder, handle the agenda directly — do not turn that "
+            "into persona curiosity.\n"
+            "- Never mix curiosity and immediate scheduling in the same reply.\n"
+            "Do not describe your review. Do not cite rules.\n"
         )
         hist = list(self._last_full_history)
         if hist and hist[0]['role'] == 'system':
             hist[0] = {'role': 'system', 'content': review_sys + '\n\n=== NIGEL GENERAL TOOL RULES ===\n' + hist[0]['content']}
         else:
             hist.insert(0, {'role': 'system', 'content': review_sys})
-        return hist + [{'role': 'assistant', 'content': f"DRAFT TO REVIEW:\n{draft}"}, {'role': 'user', 'content': 'Critically review and deliver Nigel\'s final reply now. MANDATORY: the final reply MUST contain the ```json ... ``` tool block if there is any action/reminder in the draft.'}]
+        return hist + [{'role': 'assistant', 'content': f"DRAFT TO REVIEW:\n{draft}"}, {'role': 'user', 'content': 'Critically review and deliver Nigel\'s final reply now. Include ```json tools when scheduling, curiosity (clarification), or save_memory is needed.'}]
+
+    def _bubble_max_width(self) -> int:
+        return max(260, self._BAR_W - 88)
 
     def _start_stream(self, phase: str = 'draft', messages: list[dict] | None = None):
         if self._worker and self._worker.isRunning():
             return
+        self._response_revealed = False
+        self._pending_reveal = None
+        if self._reveal_safety_timer.isActive():
+            self._reveal_safety_timer.stop()
         self.send_btn.setEnabled(False)
         self.status_lbl.setText('')
-        self._show_thinking_orb('review' if phase == 'review' else 'thinking')
+        self._show_thinking_orb({'draft': 'thinking', 'review': 'review', 'fix': 'gate', 'gate': 'gate', 'compliance_fix': 'audit', 'audit': 'audit'}.get(phase, 'thinking'))
         self._stream_buf = ''
         self._stream_phase = phase
         self._clear_dynamic_buttons()
         if phase == 'draft':
             self._last_full_history = messages or self._build_full_history()
+            self._tool_fix_attempts = 0
+            self._compliance_fix_attempts = 0
+            self._compliance_must_execute = False
         full_history = messages or self._last_full_history
         self._thinking_timer.start(16)
         try:
@@ -900,7 +939,7 @@ class Bar(QWidget):
         if self._thinking_orb is None:
             return
         self._thinking_step += 1
-        self._thinking_orb.set_phase('review' if self._stream_phase == 'review' else 'thinking')
+        self._thinking_orb.set_phase({'review': 'review', 'fix': 'gate', 'gate': 'gate', 'compliance_fix': 'audit', 'audit': 'audit'}.get(self._stream_phase, 'thinking'))
         self._thinking_orb.pulse()
         self._scroll_bottom()
 
@@ -910,38 +949,238 @@ class Bar(QWidget):
             self._stream_buf = ''
             old_worker = self._worker
             self._worker = None
-            if old_worker: old_worker.deleteLater()
+            if old_worker:
+                old_worker.deleteLater()
             self._start_stream(phase='review', messages=self._review_history_for_draft(self._draft_buf))
             return
-        self.status_lbl.setText('')
-        self.send_btn.setEnabled(True)
-        old_worker = self._worker
-        self._worker = None
-        if old_worker: old_worker.deleteLater()
-        if self._stream_buf.strip():
-            from ui.agenda_skills import visible_text, augment_ai_text_for_duplicates
-            full = augment_ai_text_for_duplicates(self._stream_buf)
-            visible = visible_text(full) or full
-            visible, deferred = self._maybe_defer_for_persona_clarification(full, visible)
-            if not deferred:
-                visible, deferred = self._maybe_defer_contradictory_question(full, visible)
-            if self._thinking_orb is not None:
-                self._thinking_orb.start_dissolve(on_done=lambda v=visible, d=deferred, f=full: self._reveal_response(v, d, f))
-                return
-            self._reveal_response(visible, deferred, full)
+        if self._stream_phase == 'fix':
+            self._review_buf = self._stream_buf
+            self._stream_buf = ''
+            old_worker = self._worker
+            self._worker = None
+            if old_worker:
+                old_worker.deleteLater()
+            self._start_intent_gate()
+            return
+        if self._stream_phase == 'compliance_fix':
+            self._review_buf = self._stream_buf
+            self._stream_buf = ''
+            old_worker = self._worker
+            self._worker = None
+            if old_worker:
+                old_worker.deleteLater()
+            self._start_compliance_audit()
+            return
+        if self._stream_phase == 'review':
+            self._review_buf = self._stream_buf
+            self._stream_buf = ''
+            old_worker = self._worker
+            self._worker = None
+            if old_worker:
+                old_worker.deleteLater()
+            self._start_intent_gate()
             return
         self._thinking_timer.stop()
         self._remove_thinking_orb()
+        self.status_lbl.setText('')
+        self.send_btn.setEnabled(True)
         self._stream_buf = ''
         self._stream_phase = 'idle'
 
+    def _start_intent_gate(self):
+        if self._gate_worker is not None and self._gate_worker.isRunning():
+            return
+        self._stream_phase = 'gate'
+        self._show_thinking_orb('gate')
+        if not self._thinking_timer.isActive():
+            self._thinking_timer.start(16)
+        from core.polling_engine import IntentGateWorker
+        self._gate_worker = IntentGateWorker(
+            user_text=getattr(self, '_last_user_text', ''),
+            assistant_reply=self._review_buf,
+            learned_facts=self._detective_learned_summary(),
+        )
+        self._gate_worker.result_ready.connect(self._on_gate_result)
+        self._gate_worker.start()
+
+    def _on_gate_result(self, result: dict):
+        self._gate_worker = None
+        mode = result.get('mode', 'conversation')
+        needs_fix = bool(result.get('needs_tool_fix', False))
+        fix_hint = result.get('fix_hint', '')
+        self._gate_persona_ui = bool(result.get('persona_ui', False))
+        self._gate_curiosity_subject = str(result.get('curiosity_subject') or '').strip()
+        if getattr(self, '_force_execute_after_clarification', False):
+            mode = 'execute_agenda'
+            needs_fix = False
+            self._gate_persona_ui = False
+        self._gate_mode = mode
+
+        if needs_fix and mode in ('execute_agenda', 'ask_context') and self._tool_fix_attempts < 1:
+            self._tool_fix_attempts += 1
+            self._start_tool_fix_stream(mode, fix_hint)
+            return
+
+        self._start_compliance_audit()
+
+    def _start_compliance_audit(self):
+        if self._compliance_worker is not None and self._compliance_worker.isRunning():
+            return
+        self._stream_phase = 'audit'
+        self._show_thinking_orb('audit')
+        if not self._thinking_timer.isActive():
+            self._thinking_timer.start(16)
+        from core.polling_engine import ComplianceAuditWorker
+        self._compliance_worker = ComplianceAuditWorker(
+            user_text=getattr(self, '_last_user_text', ''),
+            assistant_reply=self._review_buf,
+            gate_mode=getattr(self, '_gate_mode', 'conversation'),
+            learned_facts=self._detective_learned_summary(),
+            detective_original=self._detective_original_request,
+        )
+        self._compliance_worker.result_ready.connect(self._on_compliance_result)
+        self._compliance_worker.start()
+
+    def _on_compliance_result(self, result: dict):
+        self._compliance_worker = None
+        override = result.get('override_gate_mode')
+        if override in ('execute_agenda', 'ask_context', 'conversation'):
+            self._gate_mode = override
+            if override == 'execute_agenda':
+                self._gate_persona_ui = False
+        self._compliance_must_execute = bool(result.get('must_execute_agenda', False))
+
+        needs_fix = bool(result.get('needs_fix', False))
+        fix_hint = result.get('fix_hint', '')
+        if needs_fix and self._compliance_fix_attempts < 1:
+            self._compliance_fix_attempts += 1
+            self._start_compliance_fix_stream(fix_hint)
+            return
+
+        if self._compliance_must_execute and not result.get('has_valid_agenda_json'):
+            if self._compliance_fix_attempts < 1:
+                self._compliance_fix_attempts += 1
+                self._start_compliance_fix_stream(fix_hint or 'Add create_schedule in actions JSON.')
+                return
+
+        self._finish_gated_response()
+
+    def _start_compliance_fix_stream(self, fix_hint: str = ''):
+        from core.chat_compliance import build_compliance_fix_messages
+        messages = build_compliance_fix_messages(
+            user_text=getattr(self, '_last_user_text', ''),
+            draft=self._review_buf,
+            fix_hint=fix_hint,
+        )
+        self._start_stream(phase='compliance_fix', messages=messages)
+
+    def _start_tool_fix_stream(self, mode: str, fix_hint: str = ''):
+        from core.chat_intent_gate import build_tool_fix_messages
+        messages = build_tool_fix_messages(
+            user_text=getattr(self, '_last_user_text', ''),
+            draft=self._review_buf,
+            mode=mode,
+            fix_hint=fix_hint,
+        )
+        self._start_stream(phase='fix', messages=messages)
+
+    def _finish_gated_response(self):
+        from ui.agenda_skills import visible_text, augment_ai_text_for_duplicates
+        full = augment_ai_text_for_duplicates(self._review_buf)
+        visible = visible_text(full) or full
+        visible, deferred = self._apply_gate_to_response(full, visible)
+        self.status_lbl.setText('')
+        self.send_btn.setEnabled(True)
+        # Keep timer running — dissolve animation is driven by _tick_thinking.
+        if not self._thinking_timer.isActive():
+            self._thinking_timer.start(16)
+        if self._thinking_orb is not None:
+            self._pending_reveal = (visible, deferred, full)
+            self._thinking_orb.start_dissolve(on_done=self._on_dissolve_done)
+            self._reveal_safety_timer.start(3500)
+            return
+        self._reveal_response(visible, deferred, full)
+
+    def _on_dissolve_done(self):
+        if self._pending_reveal:
+            visible, deferred, full = self._pending_reveal
+            self._pending_reveal = None
+            self._reveal_response(visible, deferred, full)
+
+    def _on_reveal_safety_timeout(self):
+        if self._response_revealed:
+            return
+        if self._pending_reveal:
+            visible, deferred, full = self._pending_reveal
+            self._pending_reveal = None
+            self._reveal_response(visible, deferred, full)
+            return
+        if self._thinking_orb is not None:
+            self._remove_thinking_orb()
+            self.send_btn.setEnabled(True)
+            self._stream_phase = 'idle'
+
+    def _apply_gate_to_response(self, full_text: str, visible: str) -> tuple[str, bool]:
+        if getattr(self, '_force_execute_after_clarification', False):
+            self._force_execute_after_clarification = False
+            self._gate_mode = 'execute_agenda'
+            self._gate_persona_ui = False
+            return (visible, False)
+        mode = getattr(self, '_gate_mode', 'conversation')
+        if mode == 'execute_agenda':
+            return (visible, False)
+
+        from ui.agenda_skills import parse_skills_json, expand_chat_buttons
+
+        if getattr(self, '_gate_persona_ui', False) or mode == 'ask_context':
+            visible, deferred = self._maybe_defer_for_persona_clarification(full_text, visible)
+            if deferred:
+                return (visible, True)
+            data = parse_skills_json(full_text) or {}
+            clarification = data.get('clarification') if isinstance(data.get('clarification'), dict) else {}
+            subject = (
+                (clarification.get('subject') if clarification else '')
+                or getattr(self, '_gate_curiosity_subject', '')
+                or 'esse contexto'
+            )
+            question = (clarification.get('question') if clarification else '') or visible.strip()
+            raw_buttons = data.get('pending_buttons') or data.get('buttons', [])
+            buttons = expand_chat_buttons(user_text=getattr(self, '_last_user_text', ''), buttons=raw_buttons)
+            self._pending_persona_clarification = {
+                'name': subject,
+                'question': question,
+                'buttons': buttons,
+                'user_text': getattr(self, '_last_user_text', '') if buttons else '',
+                'learn_only': not bool(buttons),
+            }
+            if buttons and getattr(self, '_last_user_text', ''):
+                self._begin_detective_case(getattr(self, '_last_user_text', ''), buttons)
+            self._clear_dynamic_buttons()
+            return (question or visible, True)
+
+        visible, deferred = self._maybe_defer_for_persona_clarification(full_text, visible)
+        if deferred:
+            return (visible, True)
+        if mode == 'conversation':
+            return (visible, False)
+        visible, deferred = self._maybe_defer_contradictory_question(full_text, visible)
+        return (visible, deferred)
+
     def _reveal_response(self, visible: str, deferred: bool, full: str):
+        if self._response_revealed:
+            return
+        self._response_revealed = True
+        self._pending_reveal = None
+        if self._reveal_safety_timer.isActive():
+            self._reveal_safety_timer.stop()
         self._thinking_timer.stop()
         self._remove_thinking_orb()
         self._ai_bub = self._add_bubble(visible, is_user=False, tone='persona' if deferred else 'normal')
         self._history.append({'role': 'assistant', 'content': visible if deferred else full})
         if not deferred:
             self._parse_and_execute(full, auto_execute=False)
+        else:
+            self._compliance_must_execute = False
         self._ai_bub = None
         self._stream_buf = ''
         self._stream_phase = 'idle'
@@ -949,6 +1188,8 @@ class Bar(QWidget):
     def _on_error(self, msg: str):
         self._thinking_timer.stop()
         self._remove_thinking_orb()
+        self._gate_worker = None
+        self._force_execute_after_clarification = False
         self.status_lbl.setText('')
         self.send_btn.setEnabled(True)
         if self._ai_bub:
@@ -962,7 +1203,7 @@ class Bar(QWidget):
         self._worker = None
 
     def _add_bubble(self, text: str, is_user: bool = False, is_error: bool = False, tone: str = 'normal') -> MessageBubble:
-        bub = MessageBubble(text, is_user=is_user, is_error=is_error, tone=tone)
+        bub = MessageBubble(text, is_user=is_user, is_error=is_error, tone=tone, max_width=self._bubble_max_width())
         self.msg_layout.insertWidget(self.msg_layout.count() - 1, bub)
         self._scroll_bottom()
         return bub
@@ -994,11 +1235,13 @@ class Bar(QWidget):
 
     def _add_action_indicator(self, text: str, tone: str = 'normal'):
         from PyQt6.QtWidgets import QLabel
-        from PyQt6.QtCore import Qt
         from ui.theme import FONT
         lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setMaximumWidth(self._bubble_max_width())
+        lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         color = 'rgba(156, 104, 230, 190)' if tone == 'persona' else 'rgba(201, 168, 76, 180)'
-        lbl.setStyleSheet(f"color: {color}; font-family: {FONT}; font-size: 11px; padding-left: 20px;")
+        lbl.setStyleSheet(f"color: {color}; font-family: {FONT}; font-size: 11px; padding: 2px 20px 4px 20px; background: transparent;")
         lbl.setContentsMargins(0, 0, 0, 4)
         self.msg_layout.insertWidget(self.msg_layout.count() - 1, lbl)
         self._scroll_bottom()
@@ -1008,6 +1251,12 @@ class Bar(QWidget):
         if self._worker and self._worker.isRunning():
             self._worker.stop()
         self._worker = None
+        if self._gate_worker is not None and self._gate_worker.isRunning():
+            self._gate_worker.wait(2000)
+        self._gate_worker = None
+        if self._compliance_worker is not None and self._compliance_worker.isRunning():
+            self._compliance_worker.wait(2000)
+        self._compliance_worker = None
         self._ai_bub = None
         self._remove_thinking_orb()
         self._stream_phase = 'idle'
@@ -1017,6 +1266,17 @@ class Bar(QWidget):
         self._continuation_subject = ''
         self._auto_execute_next_single_agenda = False
         self._allow_next_persona_save = False
+        self._gate_mode = 'conversation'
+        self._gate_persona_ui = False
+        self._gate_curiosity_subject = ''
+        self._review_buf = ''
+        self._tool_fix_attempts = 0
+        self._compliance_fix_attempts = 0
+        self._compliance_must_execute = False
+        self._force_execute_after_clarification = False
+        self._detective_original_request = ''
+        self._detective_pending_buttons = []
+        self._detective_learned = []
         self._clear_dynamic_buttons()
         self.status_lbl.setText('')
         self.send_btn.setEnabled(True)
@@ -1042,13 +1302,30 @@ class Bar(QWidget):
             self._agenda_executor = AgendaSkillExecutor()
         return self._agenda_executor
 
+    def _extract_button_action(self, btn_def: dict) -> dict | None:
+        action = btn_def.get('confirm_action')
+        if isinstance(action, dict):
+            return action
+        raw = btn_def.get('action')
+        if isinstance(raw, dict):
+            return raw
+        if raw:
+            return {'type': raw}
+        return None
+
+    def _action_type_str(self, action: dict | None) -> str:
+        if not isinstance(action, dict):
+            return ''
+        t = action.get('type', '')
+        if isinstance(t, dict):
+            return str(t.get('type') or '')
+        return str(t or '')
+
     def _agenda_actions_from_buttons(self, buttons: list) -> list[dict]:
         actions = []
         for btn_def in buttons or []:
-            action = btn_def.get('confirm_action')
-            if not action and 'action' in btn_def:
-                action = {'type': btn_def['action']}
-            if isinstance(action, dict) and action.get('type') in frozenset({'update_schedule', 'create_schedule', 'delete_schedule', 'postpone', 'mark_done', 'reschedule'}):
+            action = self._extract_button_action(btn_def)
+            if isinstance(action, dict) and self._action_type_str(action) in frozenset({'update_schedule', 'create_schedule', 'delete_schedule', 'postpone', 'mark_done', 'reschedule'}):
                 actions.append(action)
         return actions
 
@@ -1056,18 +1333,17 @@ class Bar(QWidget):
         actions = self._agenda_actions_from_buttons(buttons)
         if not actions:
             return False
-        return any((a.get('type') == 'create_schedule' for a in actions))
+        return any((self._action_type_str(a) == 'create_schedule' for a in actions))
 
     def _raw_buttons_are_existing_agenda_ops(self, buttons: list) -> bool:
         raw_types = set()
         for btn_def in buttons or []:
-            action = btn_def.get('confirm_action')
-            if not action and 'action' in btn_def:
-                action = {'type': btn_def['action']}
+            action = self._extract_button_action(btn_def)
             if isinstance(action, dict):
-                raw_types.add(action.get('type', ''))
-        existing_ops = set()
-        existing_ops.update(frozenset({'reschedule', 'update_schedule', 'postpone', 'mark_done', 'delete_schedule'}))
+                atype = self._action_type_str(action)
+                if atype:
+                    raw_types.add(atype)
+        existing_ops = frozenset({'reschedule', 'update_schedule', 'postpone', 'mark_done', 'delete_schedule'})
         return bool(raw_types) and raw_types.issubset(existing_ops)
 
     def _simple_person_subject(self, text: str) -> str | None:
@@ -1102,8 +1378,58 @@ class Bar(QWidget):
         if not question:
             question = f"Antes de continuar, me conta melhor sobre {name}?"
         self._pending_persona_clarification = {'name': name, 'question': question, 'buttons': buttons, 'user_text': getattr(self, '_last_user_text', '')}
+        if buttons and getattr(self, '_last_user_text', ''):
+            self._begin_detective_case(getattr(self, '_last_user_text', ''), buttons)
         self._clear_dynamic_buttons()
         return (question, True)
+
+    def _begin_detective_case(self, original_request: str, buttons: list):
+        self._detective_original_request = (original_request or '').strip()
+        self._detective_pending_buttons = list(buttons or [])
+        if not self._detective_learned:
+            self._detective_learned = []
+
+    def _detective_learned_summary(self) -> list[str]:
+        return [f"{item.get('subject', '')}: {item.get('answer', '')}" for item in getattr(self, '_detective_learned', []) if item.get('answer')]
+
+    def _memory_category_for_subject(self, subject: str) -> str:
+        return 'persona' if self._simple_person_subject(subject) else 'general'
+
+    def _append_detective_fact(self, subject: str, answer: str):
+        subject = (subject or '').strip() or 'contexto'
+        answer = (answer or '').strip()
+        if not answer:
+            return
+        self._detective_learned.append({'subject': subject, 'answer': answer})
+
+    def _clear_detective_case(self):
+        self._detective_original_request = ''
+        self._detective_pending_buttons = []
+        self._detective_learned = []
+
+    def _detective_continuation_prompt(self, latest_subject: str, latest_answer: str) -> str:
+        original = self._detective_original_request or getattr(self, '_last_user_text', '')
+        learned_lines = '\n'.join(f"- {s}" for s in self._detective_learned_summary()) or '- nothing yet'
+        pending_json = json.dumps(self._detective_pending_buttons or [], ensure_ascii=False)
+        return f"""[Detective continuation — build the user's map BEFORE scheduling]
+Original request: {original}
+Latest answer: {latest_subject} = {latest_answer}
+
+What you learned this thread:
+{learned_lines}
+
+You are Nigel — curious like a detective. Re-read the ORIGINAL request and find what still is NOT 
+in memory and NOT covered above: places, apartments, objects, ownership, relationships, timelines, 
+context. One answer rarely fills every gap.
+
+If ANY meaningful unknown remains → curiosity path: ask ONE natural question about the biggest gap.
+Use clarification JSON + keep the deferred agenda in pending_buttons. Do NOT schedule yet.
+
+Only when you honestly know enough about everything that matters → schedule path: save_memory for 
+new facts + create_schedule in actions.
+
+Preserve this deferred agenda until you schedule:
+{pending_json}"""
 
     def _execute_continuation_pending_agenda(self) -> bool:
         actions = self._agenda_actions_from_buttons(self._continuation_pending_buttons)
@@ -1146,48 +1472,58 @@ class Bar(QWidget):
         name = pending.get('name', 'essa pessoa')
         answer = text.strip()
         buttons = pending.get('buttons', [])
-        actions = self._agenda_actions_from_buttons(buttons)
 
-        # Salva o contexto da persona imediatamente na memória
         if answer and len(answer) > 2:
             try:
                 executor = self._agenda_executor_instance()
+                category = self._memory_category_for_subject(name)
                 executor.execute({
                     'type': 'save_memory',
-                    'category': 'persona',
+                    'category': category,
                     'subject': name,
                     'note': answer
                 }, user_text=answer)
+                label = 'Persona' if category == 'persona' else 'Memória'
+                self._add_action_indicator(f'{label} atualizada: "{name}".', tone='persona')
             except Exception:
                 pass
 
-        if not actions:
-            # IA não incluiu pending_buttons — re-dispara o pedido original com o contexto atualizado
-            self._retry_original_request_with_context(
-                original_request=pending.get('user_text', ''),
-                context_note=f"{name} é: {answer}"
-            )
-        else:
+        self._append_detective_fact(name, answer)
+        original = pending.get('user_text', '') or self._detective_original_request
+
+        if pending.get('learn_only'):
+            self._add_bubble(f'Anotado sobre {name}.', is_user=False, tone='persona')
+        elif original and (buttons or self._detective_pending_buttons):
             self._continue_after_persona_clarification(
                 name=name, answer=answer,
                 question=pending.get('question', ''),
-                original_request=pending.get('user_text', ''),
-                pending_buttons=buttons, can_auto_execute=len(actions) == 1
+                original_request=original,
+                pending_buttons=buttons or self._detective_pending_buttons,
             )
+        elif original:
+            self._continue_after_persona_clarification(
+                name=name, answer=answer,
+                question=pending.get('question', ''),
+                original_request=original,
+                pending_buttons=[],
+            )
+        else:
+            self._add_bubble(f'Anotado sobre {name}.', is_user=False, tone='persona')
         self._scroll_bottom()
         return True
 
     def _retry_original_request_with_context(self, original_request: str, context_note: str):
-        """Re-dispara o pedido original após obter contexto de clarificação."""
         if not original_request:
             return
         if not self._api.get_active_provider():
+            self._add_bubble('Entendi o contexto, mas preciso de um provider configurado para continuar o pedido.', is_user=False, is_error=True)
             return
+        self._append_detective_fact('contexto', context_note)
         self._last_user_text = original_request
         self._allow_next_persona_save = True
-        # Inject a short hint so the AI understands what to do
-        hint = f"[updated context: {context_note}] Now process the previous request and emit the agenda tool JSON: {original_request}"
-        self._history.append({'role': 'user', 'content': hint})
+        self._auto_execute_next_single_agenda = False
+        prompt = self._detective_continuation_prompt('contexto', context_note)
+        self._history.append({'role': 'user', 'content': prompt})
         self._start_stream()
 
     def _continue_after_persona_clarification(self, name: str, answer: str, question: str, original_request: str, pending_buttons: list | None = None, can_auto_execute: bool = False):
@@ -1196,26 +1532,16 @@ class Bar(QWidget):
         if not self._api.get_active_provider():
             self._add_bubble('Entendi o contexto, mas preciso de um provider configurado para continuar o pedido.', is_user=False, is_error=True)
             return
+        if not self._detective_original_request:
+            self._begin_detective_case(original_request, pending_buttons or [])
+        elif pending_buttons:
+            self._detective_pending_buttons = list(pending_buttons)
         self._last_user_text = original_request
-        self._auto_execute_next_single_agenda = bool(can_auto_execute)
+        self._auto_execute_next_single_agenda = False
         self._allow_next_persona_save = True
-        self._continuation_pending_buttons = list(pending_buttons or [])
+        self._continuation_pending_buttons = list(pending_buttons or self._detective_pending_buttons or [])
         self._continuation_subject = name
-        pending_json = json.dumps(pending_buttons or [], ensure_ascii=False)
-        prompt = f"""[Continuation: {name} = {answer}]
-Original request: {original_request}
-
-Now that you know {name} is "{answer}", process the original request.
-- If you learned something useful, save it with save_memory in "actions".
-- Include the agenda button below in "buttons" (copy it exactly).
-- Written reply: max 1 sentence, in the user's language. Do NOT say "done" without the JSON.
-
-```json
-{{
-  "actions": [],
-  "buttons": {pending_json}
-}}
-```"""
+        prompt = self._detective_continuation_prompt(name, answer)
         self._history.append({'role': 'user', 'content': prompt})
         self._start_stream()
 
@@ -1243,11 +1569,9 @@ Now that you know {name} is "{answer}", process the original request.
         persona_btn_css = f"\n            QPushButton {{\n                background: rgba(156,104,230, 28);\n                border: 1px solid rgba(156,104,230, 125);\n                color: rgba(112, 61, 166, 230);\n                font-size: 11px;\n                font-family: {FONT};\n                border-radius: 7px;\n                padding: 6px 12px;\n                font-weight: bold;\n            }}\n            QPushButton:hover {{ background: rgba(156,104,230, 58); }}\n        "
         for btn_def in buttons[:3]:
             label = btn_def.get('label', 'Ação')
-            confirm_action = btn_def.get('confirm_action')
-            if not confirm_action and 'action' in btn_def:
-                confirm_action = {'type': btn_def['action']}
+            confirm_action = self._extract_button_action(btn_def)
             btn = QPushButton(label)
-            is_persona_action = isinstance(confirm_action, dict) and confirm_action.get('type') == 'ask_person_relation'
+            is_persona_action = isinstance(confirm_action, dict) and self._action_type_str(confirm_action) == 'ask_person_relation'
             btn.setStyleSheet(persona_btn_css if is_persona_action else btn_css)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             if confirm_action:
@@ -1266,7 +1590,7 @@ Now that you know {name} is "{answer}", process the original request.
         if has_tools:
             self._show_thinking_orb('tool')
             QApplication.processEvents()
-        if isinstance(data.get('clarification'), dict):
+        if isinstance(data.get('clarification'), dict) and getattr(self, '_gate_mode', '') != 'execute_agenda':
             self._remove_thinking_orb()
             return
         
@@ -1283,18 +1607,23 @@ Now that you know {name} is "{answer}", process the original request.
         _AGENDA_TYPES = {'create_schedule', 'update_schedule', 'reschedule', 'mark_done', 'delete_schedule', 'postpone'}
         agenda_acted = False
         for action in data.get('actions', []):
-            held_name = None if self._allow_next_persona_save else self._should_hold_persona_save(action)
+            held_name = None
+            if getattr(self, '_gate_mode', '') != 'execute_agenda':
+                held_name = None if self._allow_next_persona_save else self._should_hold_persona_save(action)
             if held_name:
                 self._pending_persona_clarification = {'name': held_name, 'buttons': buttons, 'user_text': user_text}
                 self._add_bubble(f"Isso parece importante para sua Persona, mas antes preciso entender melhor: quem é {held_name} para você?", is_user=False, tone='persona')
                 self._remove_thinking_orb()
                 return
             atype = normalize_action(action, user_text).get('type', '')
-            # Agenda actions placed in "actions" execute immediately (same as the popup)
+            gate_mode = getattr(self, '_gate_mode', 'conversation')
             if atype in _AGENDA_TYPES:
+                if gate_mode != 'execute_agenda' and not getattr(self, '_compliance_must_execute', False):
+                    continue
                 result = executor.execute(normalize_action(action, user_text), user_text=user_text)
                 self._add_action_indicator(result, tone='normal')
                 agenda_acted = True
+                self._compliance_must_execute = False
             elif auto_execute or action.get('type') == 'save_memory':
                 result = executor.execute(normalize_action(action, user_text), user_text=user_text)
                 tone = 'persona' if (action.get('category') or '').strip().lower() == 'persona' else 'normal'
@@ -1305,6 +1634,7 @@ Now that you know {name} is "{answer}", process the original request.
             self._allow_next_persona_save = False
             self._continuation_pending_buttons = []
             self._continuation_subject = ''
+            self._clear_detective_case()
             self._remove_thinking_orb()
             return
         if buttons:
