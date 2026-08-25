@@ -124,7 +124,3 @@ ficam em `ui/theme.py`; nenhum arquivo de UI escreve cor literal.
 ### Licença
 
 [MIT](LICENSE) — use, modifique e distribua à vontade.
-
----
-
-<p align="center"><sub>v0.7 — feito com ☕ e Composio</sub></p>
