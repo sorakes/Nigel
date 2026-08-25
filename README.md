@@ -121,6 +121,10 @@ Tema **Grafite**: superfícies neutras em cinza-carvão, com o dourado reservado
 identidade — o logo, o anel de foco e o badge de notificação. Todos os tokens
 ficam em `ui/theme.py`; nenhum arquivo de UI escreve cor literal.
 
+### Licença
+
+[MIT](LICENSE) — use, modifique e distribua à vontade.
+
 ---
 
 <p align="center"><sub>v0.7 — feito com ☕ e Composio</sub></p>
