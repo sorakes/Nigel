@@ -3,7 +3,6 @@ core/ai_triage.py — Classificador de importância de mensagens + LLM helpers c
 """
 
 import json
-import os
 from core.storage import load_config
 
 _DEFAULT_TRIAGE_PROMPT = (
@@ -43,20 +42,39 @@ _GRAPH_PROMPT = (
 )
 
 
-def call_llm_json(messages: list[dict], max_tokens: int = 512) -> dict | None:
-    """Call active provider and parse JSON from response."""
+def call_llm_json(messages: list[dict], max_tokens: int = 1024) -> dict | None:
+    """Call active provider and parse JSON from response with fallback."""
     from core.api_client import APIClient
     try:
         response = APIClient().call_llm(messages, max_tokens=max_tokens)
         if not response:
             return None
-        clean = response.strip().strip('```json').strip('```').strip()
+        clean = response.strip()
+        if '```' in clean:
+            clean = clean.split('```')[1]
+            if clean.startswith('json'):
+                clean = clean[4:]
+            clean = clean.strip()
         start, end = clean.find('{'), clean.rfind('}')
         if start != -1 and end != -1:
             clean = clean[start:end + 1]
-        return json.loads(clean)
+        try:
+            return json.loads(clean)
+        except json.JSONDecodeError:
+            # Fallback de extração por regex se o JSON tiver vírgulas ou aspas imperfeitas
+            import re
+            imp_match = re.search(r'"important"\s*:\s*(true|false)', clean, re.IGNORECASE)
+            sum_match = re.search(r'"summary"\s*:\s*"([^"]*)"', clean)
+            rea_match = re.search(r'"reason"\s*:\s*"([^"]*)"', clean)
+            if imp_match:
+                return {
+                    "important": imp_match.group(1).lower() == 'true',
+                    "summary": sum_match.group(1) if sum_match else "",
+                    "reason": rea_match.group(1) if rea_match else ""
+                }
+            raise
     except Exception as e:
-        print(f"[Nigel] LLM JSON call failed: {e}")
+        print(f"[Nigel] LLM JSON call fallback/failed: {e}")
         return None
 
 
@@ -73,7 +91,7 @@ def classify(message):
         {"role": "user", "content": message_text},
     ]
     try:
-        result = call_llm_json(messages, max_tokens=256)
+        result = call_llm_json(messages, max_tokens=512)
         if not result:
             return {"important": False, "summary": "", "reason": "Erro de classificação"}
         return {

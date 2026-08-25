@@ -1,7 +1,9 @@
-PyQt6==6.7.0
-requests==2.32.3
-python-dotenv==1.0.1
-msal==1.28.0
-google-api-python-client==2.133.0
-google-auth-oauthlib==1.2.0
-
+PyQt6>=6.7.0
+requests>=2.32.3
+python-dotenv>=1.0.1
+composio>=0.20.0
+composio-core>=0.7.21
+composio-client>=1.43.0
+composio-openai>=0.20.0
+keyring>=25.0.0
+ddgs>=9.0.0

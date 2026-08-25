@@ -29,42 +29,10 @@ node_modules/
 .tmp/
 .vscode/
 
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-
-# PyInstaller
-build/
-dist/
-*.spec
-
-# OS Files
-.DS_Store
-Thumbs.db
-
-# Node
-node_modules/
-
-# Logs & Temp
-*.log
-.tmp/
-.vscode/
-
-# Tokens and Credentials
-google_token.pickle
-msal_cache.bin
-
 # Antigravity Agents
 .agents/
 credentials.json
 token.json
+
+# Scratch (testes locais que batem em APIs reais)
+scratch/

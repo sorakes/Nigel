@@ -1,80 +1,27 @@
-__doc__ = """
-core/polling_engine.py — Motor de leitura em background do Nigel.
+"""
+core/polling_engine.py — Motor de leitura em background do Nigel via Composio.
 
-Lê e-mails (Outlook + Gmail) a cada 60 segundos, classifica com a IA
-e só notifica a interface quando algo realmente importante aparecer.
+Lê e-mails (Outlook + Gmail) a cada 60 segundos via ferramentas do Composio,
+classifica com a IA e só notifica a interface quando algo importante aparecer.
 """
 
 import time
-import requests
 from PyQt6.QtCore import QThread, pyqtSignal
-from core.microsoft_auth import MicrosoftAuth
-from core.google_auth import GoogleAuth
+from core.composio_manager import ComposioManager, TOOLKIT_GMAIL, TOOLKIT_OUTLOOK
 from core import ai_triage
-from core.database import SeqDB
+from core.database import NigelDB
 
 _POLL_INTERVAL = 60
 
-class ComplianceAuditWorker(QThread):
-    __doc__ = 'Auditoria final: a IA principal seguiu as regras? Agenda foi emitida?'
-
-    result_ready = pyqtSignal(dict)
-
-    def __init__(self, user_text: str, assistant_reply: str, gate_mode: str,
-                 learned_facts: list | None = None, detective_original: str = ''):
-        super().__init__()
-        self._user_text = user_text
-        self._assistant_reply = assistant_reply
-        self._gate_mode = gate_mode
-        self._learned_facts = learned_facts or []
-        self._detective_original = detective_original
-
-    def run(self):
-        try:
-            from core.chat_compliance import audit
-            result = audit(
-                self._user_text,
-                self._assistant_reply,
-                gate_mode=self._gate_mode,
-                learned_facts=self._learned_facts,
-                detective_original=self._detective_original,
-            )
-            self.result_ready.emit(result)
-        except Exception as e:
-            print(f"[Nigel] ComplianceAuditWorker erro: {e}")
-            from core.chat_compliance import _local_audit
-            self.result_ready.emit(_local_audit(self._assistant_reply, self._gate_mode))
-
-class IntentGateWorker(QThread):
-    __doc__ = 'Camada final: decide se a resposta é agenda, curiosidade ou conversa.'
-
-    result_ready = pyqtSignal(dict)
-
-    def __init__(self, user_text: str, assistant_reply: str, learned_facts: list | None = None):
-        super().__init__()
-        self._user_text = user_text
-        self._assistant_reply = assistant_reply
-        self._learned_facts = learned_facts or []
-
-    def run(self):
-        try:
-            from core.chat_intent_gate import evaluate
-            result = evaluate(self._user_text, self._assistant_reply, self._learned_facts)
-            if result is None:
-                result = {'mode': 'conversation', 'persona_ui': False, 'curiosity_subject': '', 'needs_tool_fix': False, 'fix_hint': ''}
-            self.result_ready.emit(result)
-        except Exception as e:
-            print(f"[Nigel] IntentGateWorker erro: {e}")
-            self.result_ready.emit({'mode': 'conversation', 'persona_ui': False, 'curiosity_subject': '', 'needs_tool_fix': False, 'fix_hint': ''})
 
 class GraphAnalysisWorker(QThread):
-    __doc__ = 'Pede para a IA pensar nas relações do grafo de conhecimento (em background).'
+    """Pede para a IA pensar nas relações do grafo de conhecimento (em background)."""
 
     analysis_done = pyqtSignal()
 
     def run(self):
         try:
-            db = SeqDB.get_instance()
+            db = NigelDB.get_instance()
             graph = db.get_knowledge_graph(limit=80)
             result = ai_triage.analyze_graph(graph['nodes'])
             if result is not None:
@@ -83,8 +30,9 @@ class GraphAnalysisWorker(QThread):
         except Exception as e:
             print(f"[Nigel] GraphAnalysisWorker erro: {e}")
 
+
 class GraphPollingWorker(QThread):
-    __doc__ = 'Lê e-mails do Outlook (Microsoft Graph) em background.'
+    """Lê e-mails do Outlook via Composio em background."""
 
     new_important_item = pyqtSignal(dict)
     status_update = pyqtSignal(str)
@@ -97,18 +45,36 @@ class GraphPollingWorker(QThread):
         self._running = False
 
     def run(self):
-        db = SeqDB.get_instance()
-        self.status_update.emit('[Outlook] Motor iniciado.')
+        db = NigelDB.get_instance()
+        cm = ComposioManager.get_instance()
+        self.status_update.emit('[Outlook] Motor iniciado via Composio.')
+
+        last_connected_state = None
 
         while self._running:
             try:
-                auth = MicrosoftAuth.get_instance()
-                token = auth.get_token_silent()
-
-                if token:
-                    self._fetch_and_process(token, db)
+                if cm.is_configured() and cm.check_connection(TOOLKIT_OUTLOOK):
+                    if last_connected_state is not True:
+                        self.status_update.emit('[Outlook] Conexão ativa com Composio.')
+                        last_connected_state = True
+                    messages = cm.fetch_unread_outlook(limit=10)
+                    for item in messages:
+                        msg_id = item['id']
+                        if db.is_seen(msg_id):
+                            continue
+                        db.mark_seen(msg_id, 'outlook')
+                        self.status_update.emit(f'[Outlook] Nova mensagem: {item["subject"][:50]}')
+                        triage = ai_triage.classify(item)
+                        if triage.get('important'):
+                            item['ai_summary'] = triage.get('summary', '')
+                            item['ai_reason'] = triage.get('reason', '')
+                            db.save_important(item, saved_by='ai')
+                            self.new_important_item.emit(item)
+                            self.status_update.emit(f'[Outlook] IMPORTANTE: {triage.get("reason", "")}')
                 else:
-                    self.status_update.emit('[Outlook] Sem token. Aguardando login...')
+                    if last_connected_state is not False and cm.is_configured():
+                        self.status_update.emit('[Outlook] Conta não conectada no Composio.')
+                        last_connected_state = False
             except Exception as e:
                 self.status_update.emit(f'[Outlook] Erro: {e}')
 
@@ -117,45 +83,9 @@ class GraphPollingWorker(QThread):
                     break
                 time.sleep(1)
 
-    def _fetch_and_process(self, token: str, db: SeqDB):
-        headers = {'Authorization': f'Bearer {token}'}
-        url = 'https://graph.microsoft.com/v1.0/me/messages'
-        params = {
-            '$filter': 'isRead eq false',
-            '$top': 10,
-            '$select': 'id,subject,from,bodyPreview',
-            '$orderby': 'receivedDateTime desc'
-        }
-        resp = requests.get(url, headers=headers, params=params, timeout=15)
-        resp.raise_for_status()
-
-        for msg in resp.json().get('value', []):
-            msg_id = msg['id']
-            if db.is_seen(msg_id):
-                continue
-
-            db.mark_seen(msg_id, 'outlook')
-
-            item = {
-                'id': msg_id,
-                'source': 'outlook',
-                'subject': msg.get('subject', ''),
-                'sender': msg.get('from', {}).get('emailAddress', {}).get('address', ''),
-                'body_preview': msg.get('bodyPreview', '')
-            }
-
-            self.status_update.emit(f'[Outlook] Nova mensagem: {item["subject"][:50]}')
-
-            triage = ai_triage.classify(item)
-            if triage.get('important'):
-                item['ai_summary'] = triage.get('summary', '')
-                item['ai_reason'] = triage.get('reason', '')
-                db.save_important(item, saved_by='ai')
-                self.new_important_item.emit(item)
-                self.status_update.emit(f'[Outlook] ⚡ IMPORTANTE: {triage.get("reason", "")}')
 
 class GmailPollingWorker(QThread):
-    __doc__ = 'Lê e-mails do Gmail (Google API) em background.'
+    """Lê e-mails do Gmail via Composio em background."""
 
     new_important_item = pyqtSignal(dict)
     status_update = pyqtSignal(str)
@@ -168,18 +98,37 @@ class GmailPollingWorker(QThread):
         self._running = False
 
     def run(self):
-        db = SeqDB.get_instance()
-        self.status_update.emit('[Gmail] Motor iniciado.')
+        db = NigelDB.get_instance()
+        cm = ComposioManager.get_instance()
+        self.status_update.emit('[Gmail] Motor iniciado via Composio.')
+        last_connected_state = None
 
         while self._running:
             try:
-                auth = GoogleAuth.get_instance()
-                token = auth.get_token_silent()
-
-                if token:
-                    self._fetch_and_process(token, db)
+                if cm.is_configured() and cm.check_connection(TOOLKIT_GMAIL):
+                    if last_connected_state is not True:
+                        self.status_update.emit('[Gmail] Conexão ativa com Composio.')
+                        last_connected_state = True
+                    messages = cm.fetch_unread_gmail(limit=10)
+                    for item in messages:
+                        msg_id = item['id']
+                        if db.is_seen(msg_id):
+                            continue
+                        db.mark_seen(msg_id, 'gmail')
+                        self.status_update.emit(f'[Gmail] Nova mensagem: {item["subject"][:50]}')
+                        triage = ai_triage.classify(item)
+                        if triage.get('important'):
+                            item['ai_summary'] = triage.get('summary', '')
+                            item['ai_reason'] = triage.get('reason', '')
+                            db.save_important(item, saved_by='ai')
+                            self.new_important_item.emit(item)
+                            self.status_update.emit(f'[Gmail] IMPORTANTE: {triage.get("reason", "")}')
+                        else:
+                            self.status_update.emit(f'[Gmail] Ignorado: {triage.get("reason", "")}')
                 else:
-                    self.status_update.emit('[Gmail] Sem token. Aguardando login...')
+                    if last_connected_state is not False and cm.is_configured():
+                        self.status_update.emit('[Gmail] Conta não conectada no Composio.')
+                        last_connected_state = False
             except Exception as e:
                 self.status_update.emit(f'[Gmail] Erro: {e}')
 
@@ -187,51 +136,3 @@ class GmailPollingWorker(QThread):
                 if not self._running:
                     break
                 time.sleep(1)
-
-    def _fetch_and_process(self, token: str, db: SeqDB):
-        headers = {'Authorization': f'Bearer {token}'}
-        list_resp = requests.get(
-            'https://gmail.googleapis.com/gmail/v1/users/me/messages',
-            headers=headers,
-            params={'labelIds': 'INBOX,UNREAD', 'maxResults': 10},
-            timeout=15
-        )
-        list_resp.raise_for_status()
-
-        for msg_ref in list_resp.json().get('messages', []):
-            msg_id = msg_ref['id']
-            if db.is_seen(msg_id):
-                continue
-
-            db.mark_seen(msg_id, 'gmail')
-
-            detail_resp = requests.get(
-                f'https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}',
-                headers=headers,
-                params={'format': 'metadata', 'metadataHeaders': ['Subject', 'From']},
-                timeout=15
-            )
-            detail_resp.raise_for_status()
-            detail = detail_resp.json()
-
-            headers_map = {h['name']: h['value'] for h in detail.get('payload', {}).get('headers', [])}
-
-            item = {
-                'id': msg_id,
-                'source': 'gmail',
-                'subject': headers_map.get('Subject', ''),
-                'sender': headers_map.get('From', ''),
-                'body_preview': detail.get('snippet', '')
-            }
-
-            self.status_update.emit(f'[Gmail] Nova mensagem: {item["subject"][:50]}')
-
-            triage = ai_triage.classify(item)
-            if triage.get('important'):
-                item['ai_summary'] = triage.get('summary', '')
-                item['ai_reason'] = triage.get('reason', '')
-                db.save_important(item, saved_by='ai')
-                self.new_important_item.emit(item)
-                self.status_update.emit(f'[Gmail] ⚡ IMPORTANTE: {triage.get("reason", "")}')
-            else:
-                self.status_update.emit(f'[Gmail] Ignorado: {triage.get("reason", "")}')

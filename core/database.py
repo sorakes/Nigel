@@ -7,14 +7,11 @@ Filosofia:
                  ou quando o usuário explicitamente pedir para salvar algo.
 """
 
-import sqlite3
-import os
 import re
 import hashlib
 from datetime import datetime
-from core.storage import get_appdata_dir
 
-_DB_FILE = 'nigel.db'
+from core import db as _db
 
 class NigelDB:
     __module__ = __name__
@@ -28,20 +25,22 @@ class NigelDB:
         return cls._instance
 
     def __init__(self):
-        db_path = os.path.join(get_appdata_dir(), _DB_FILE)
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self._create_tables()
+        _db.ensure_schema('nigel_core', self._create_tables)
 
-    def _create_tables(self):
-        self.conn.execute('''
+    @property
+    def conn(self):
+        """Conexao SQLite desta thread (ver core/db.py)."""
+        return _db.get_conn()
+
+    def _create_tables(self, conn):
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS seen_ids (
                 id        TEXT PRIMARY KEY,
                 source    TEXT NOT NULL,
                 seen_at   TEXT NOT NULL
             )
         ''')
-        self.conn.execute('''
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS saved_items (
                 id               TEXT PRIMARY KEY,
                 source           TEXT NOT NULL,
@@ -55,7 +54,7 @@ class NigelDB:
                 relevance_score  INTEGER DEFAULT 50   -- 1-100, definido/ajustado pela IA
             )
         ''')
-        self.conn.execute('''
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS knowledge_nodes (
                 id              TEXT PRIMARY KEY,
                 title           TEXT,
@@ -67,7 +66,7 @@ class NigelDB:
                 updated_at      TEXT NOT NULL
             )
         ''')
-        self.conn.execute('''
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS knowledge_edges (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_id  TEXT NOT NULL,
@@ -79,14 +78,14 @@ class NigelDB:
                 UNIQUE(source_id, target_id, relation, created_by)
             )
         ''')
-        self.conn.commit()
-        self._migrate()
+        conn.commit()
+        self._migrate(conn)
 
-    def _migrate(self):
-        cols = [row[1] for row in self.conn.execute('PRAGMA table_info(saved_items)').fetchall()]
+    def _migrate(self, conn):
+        cols = [row[1] for row in conn.execute('PRAGMA table_info(saved_items)').fetchall()]
         if 'relevance_score' not in cols:
-            self.conn.execute('ALTER TABLE saved_items ADD COLUMN relevance_score INTEGER DEFAULT 50')
-            self.conn.commit()
+            conn.execute('ALTER TABLE saved_items ADD COLUMN relevance_score INTEGER DEFAULT 50')
+            conn.commit()
 
     def _node_type_for_item(self, item: dict) -> str:
         source = item.get('source', '').lower()
@@ -348,6 +347,35 @@ class NigelDB:
         row = self.conn.execute("SELECT 1 FROM saved_items WHERE id = ? AND source = 'persona' LIMIT 1", (item_id,)).fetchone()
         return row is not None
 
+    def find_person_context(self, sender: str) -> str:
+        """Contexto curto sobre um remetente, se ele já for uma pessoa conhecida.
+
+        Consulta direta (sem LLM) para não pagar uma rodada de agente só para
+        abrir o popup de e-mail — casa o nome extraído de "Nome <email>" contra
+        as pessoas gravadas por `memory_save(kind='person')`.
+        """
+        sender = (sender or '').strip()
+        if not sender:
+            return ''
+        email_match = re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', sender)
+        email = (email_match.group(0) if email_match else '').lower()
+        name_part = sender.split('<', 1)[0].strip().strip('"') if '<' in sender else sender
+        if not name_part or name_part == email:
+            name_part = email.split('@')[0] if email else ''
+        first_name = name_part.split()[0].lower() if name_part else ''
+        if not first_name:
+            return ''
+        rows = self.conn.execute('''
+            SELECT subject, body_preview FROM saved_items
+            WHERE source = 'persona' AND id LIKE 'persona:person:%'
+        ''').fetchall()
+        for row in rows:
+            subject = (row['subject'] or '')
+            if first_name in subject.lower():
+                relacao = (row['body_preview'] or '').split(':', 1)[-1].strip()
+                return relacao or subject
+        return ''
+
     def get_saved_items(self, limit: int = 20, include_persona: bool = True) -> list[dict]:
         query = 'SELECT * FROM saved_items'
         params = []
@@ -360,6 +388,24 @@ class NigelDB:
 
     def delete_saved_item(self, item_id: str):
         self.conn.execute('DELETE FROM saved_items WHERE id = ?', (item_id,))
+        self.conn.commit()
+
+    def update_saved_item_text(self, item_id: str, subject: str = None, body_preview: str = None):
+        """Edita uma memoria existente. Usado pela transparencia do grafo
+        (ui/memory_graph.py) — antes so dava pra apagar, nao corrigir."""
+        fields, values = [], []
+        if subject is not None:
+            fields.append('subject = ?')
+            values.append(subject.strip())
+        if body_preview is not None:
+            fields.append('body_preview = ?')
+            values.append(body_preview.strip())
+            fields.append('ai_summary = ?')
+            values.append(body_preview.strip())
+        if not fields:
+            return
+        values.append(item_id)
+        self.conn.execute(f"UPDATE saved_items SET {', '.join(fields)} WHERE id = ?", values)
         self.conn.commit()
 
     def update_relevance(self, item_id: str, score: int):

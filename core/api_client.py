@@ -11,45 +11,80 @@ from dotenv import load_dotenv
 load_dotenv()
 
 PROVIDERS: dict[str, dict] = {
+    # Padroes revisados em 2026-08-24 depois de dois achados: o antigo padrao
+    # do Groq (`llama-3.3-70b-versatile`) e do Gemini (`gemini-2.0-flash`)
+    # foram DESCONTINUADOS pelos provedores — ver docs oficiais checadas ao
+    # vivo. Escolha daqui pra frente prioriza, nessa ordem: (1) chamada de
+    # ferramenta NATIVA confiavel — inclusive varias no mesmo turno, que e'
+    # o padrao comum do Nigel (agenda_agent + email_agent juntos); (2) custo;
+    # so' depois (3) velocidade. Onde deu pra testar de verdade (Ollama
+    # Cloud, unica chave configurada nesta maquina), o padrao escolhido
+    # passou em bateria de tool-calling real, nao mockada — ver
+    # scratch/bench_tools.py. Nos outros, a escolha e' o mais barato entre
+    # os que o catalogo publico do provedor confirma suportar `tools`.
     'groq': {
         'name': 'Groq',
         'base_url': 'https://api.groq.com/openai/v1',
         'env_key': 'NIGEL_GROQ_API_KEY',
-        'default_model': 'llama-3.1-70b-versatile',
-        'models': ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+        'default_model': 'openai/gpt-oss-120b',
+        'models': ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'groq/compound'],
         'type': 'openai_compat'
     },
     'openai': {
         'name': 'OpenAI',
         'base_url': 'https://api.openai.com/v1',
         'env_key': 'NIGEL_OPENAI_API_KEY',
-        'default_model': 'gpt-4o-mini',
-        'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'],
+        'default_model': 'gpt-5.6-luna',
+        'models': ['gpt-5.6-luna', 'gpt-5-mini', 'gpt-5.6-terra'],
         'type': 'openai_compat'
     },
     'gemini': {
         'name': 'Gemini',
         'base_url': 'https://generativelanguage.googleapis.com/v1beta',
         'env_key': 'NIGEL_GEMINI_API_KEY',
-        'default_model': 'gemini-1.5-flash',
-        'models': ['gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+        'default_model': 'gemini-2.5-flash-lite',
+        'models': ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3.5-flash-lite'],
         'type': 'gemini'
     },
     'openrouter': {
         'name': 'OpenRouter',
         'base_url': 'https://openrouter.ai/api/v1',
         'env_key': 'NIGEL_OPENROUTER_API_KEY',
-        'default_model': 'meta-llama/llama-3.1-8b-instruct:free',
-        'models': ['meta-llama/llama-3.1-8b-instruct:free', 'anthropic/claude-3.5-sonnet'],
+        # Nao usa mais um modelo ":free" — esses tendem a ser fracos em tool
+        # calling e sao rate-limited a parte (ver bench_tools.py: modelos
+        # ~8B falham chamada de ferramenta com frequencia). gpt-oss-120b via
+        # OpenRouter e' o mesmo modelo validado ao vivo via Ollama Cloud,
+        # com preco por token confirmado no catalogo publico deles.
+        'default_model': 'openai/gpt-oss-120b',
+        'models': ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3-30b-a3b-instruct-2507'],
         'type': 'openai_compat'
     },
     'ollama': {
         'name': 'Ollama (Local)',
         'base_url': None,
         'env_key': 'NIGEL_OLLAMA_URL',
-        'default_model': 'llama3',
-        'models': [],
+        # 'llama3' (sem tag) nem baixa mais por esse nome no Ollama atual.
+        # Testado ao vivo nesta maquina, 3x cada, uma ferramenta e depois
+        # duas no mesmo turno: llama3.1:8b foi o UNICO 100% (6/6) — os
+        # modelos menores (llama3.2:3b, qwen2.5:3b/7b) acertam o caso simples
+        # mas falham quase sempre a chamada paralela. Roda em ~5GB de RAM/VRAM,
+        # cabe em laptop comum; e' o piso recomendado pra uso local de verdade.
+        'default_model': 'llama3.1:8b',
+        'models': ['llama3.1:8b', 'qwen3:8b', 'llama3.2:3b'],
         'type': 'ollama'
+    },
+    'ollama_cloud': {
+        'name': 'Ollama Cloud',
+        'base_url': 'https://ollama.com/v1',
+        'env_key': 'NIGEL_OLLAMA_CLOUD_API_KEY',
+        # minimax-m3 foi o UNICO, em 3 rodadas seguidas, que acertou duas
+        # ferramentas no mesmo turno (agenda + e-mail juntos) — o padrao real
+        # de uso do Nigel. gpt-oss:120b acerta o caso simples e e' ~2x mais
+        # rapido, mas so' faz uma ferramenta por vez; fica como alternativa
+        # pra quando velocidade importa mais que cobrir o caso paralelo.
+        'default_model': 'minimax-m3',
+        'models': ['minimax-m3', 'gpt-oss:120b', 'gpt-oss:20b'],
+        'type': 'openai_compat'
     }
 }
 
@@ -105,7 +140,7 @@ class StreamWorker(QThread):
             'model': model,
             'messages': self.messages,
             'stream': True,
-            'max_tokens': 2048
+            'max_tokens': 4096
         }
         resp = requests.post(
             f"{base_url}/chat/completions",
@@ -152,7 +187,7 @@ class StreamWorker(QThread):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?key={api_key}&alt=sse"
         payload = {
             'contents': contents,
-            'generationConfig': {'maxOutputTokens': 2048}
+            'generationConfig': {'maxOutputTokens': 4096}
         }
         if system_parts:
             payload['systemInstruction'] = {'parts': [{'text': '\n\n'.join(system_parts)}]}
@@ -175,7 +210,7 @@ class StreamWorker(QThread):
                     continue
 
     def _run_ollama(self):
-        base_url = os.getenv('NIGEL_OLLAMA_URL', 'http://localhost:11434').rstrip('/')
+        base_url = (os.getenv('NIGEL_OLLAMA_URL') or 'http://localhost:11434').rstrip('/')
         model = self.model or os.getenv('NIGEL_OLLAMA_MODEL', 'llama3')
         payload = {
             'model': model,
@@ -254,7 +289,7 @@ class APIClient:
         model = (os.getenv(env_model_key) or '').strip() or (info.get('default_model') or '')
         base_url = info.get('base_url') or ''
         if active == 'ollama':
-            base_url = os.getenv('NIGEL_OLLAMA_URL', 'http://localhost:11434').rstrip('/')
+            base_url = (os.getenv('NIGEL_OLLAMA_URL') or 'http://localhost:11434').rstrip('/')
         return {
             'provider': active,
             'type': info['type'],
@@ -293,11 +328,13 @@ class APIClient:
             'NIGEL_GEMINI_API_KEY': os.getenv('NIGEL_GEMINI_API_KEY', ''),
             'NIGEL_OPENROUTER_API_KEY': os.getenv('NIGEL_OPENROUTER_API_KEY', ''),
             'NIGEL_OLLAMA_URL': os.getenv('NIGEL_OLLAMA_URL', ''),
+            'NIGEL_OLLAMA_CLOUD_API_KEY': os.getenv('NIGEL_OLLAMA_CLOUD_API_KEY', ''),
             'NIGEL_GROQ_MODEL': os.getenv('NIGEL_GROQ_MODEL', PROVIDERS['groq']['default_model']),
             'NIGEL_OPENAI_MODEL': os.getenv('NIGEL_OPENAI_MODEL', PROVIDERS['openai']['default_model']),
             'NIGEL_GEMINI_MODEL': os.getenv('NIGEL_GEMINI_MODEL', PROVIDERS['gemini']['default_model']),
             'NIGEL_OPENROUTER_MODEL': os.getenv('NIGEL_OPENROUTER_MODEL', PROVIDERS['openrouter']['default_model']),
             'NIGEL_OLLAMA_MODEL': os.getenv('NIGEL_OLLAMA_MODEL', PROVIDERS['ollama']['default_model']),
+            'NIGEL_OLLAMA_CLOUD_MODEL': os.getenv('NIGEL_OLLAMA_CLOUD_MODEL', PROVIDERS['ollama_cloud']['default_model']),
             'NIGEL_BAR_WIDTH': os.getenv('NIGEL_BAR_WIDTH', '600'),
             'NIGEL_BAR_HEIGHT': os.getenv('NIGEL_BAR_HEIGHT', '60'),
         }

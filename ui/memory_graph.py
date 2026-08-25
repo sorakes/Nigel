@@ -12,11 +12,37 @@ import math
 import random
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QRadialGradient, QBrush
-from PyQt6.QtWidgets import QFrame, QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem, QGraphicsScene, QGraphicsTextItem, QGraphicsView, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 from ui.icons import IconButton, IconWidget
-from ui.theme import C_GOLD, C_GOLD_BRIGHT, FONT, GOLD_BRIGHT_CSS, LABEL_SECTION, TEXT_CSS, TEXT_MID_CSS
+from ui.theme import (
+    C_GOLD, C_GOLD_SOFT, C_TEXT, C_TEXT_MUTE,
+    C_BG_SOLID, C_BORDER_HI, FONT, FONT_FAMILY,
+    BG_SOLID_CSS, BORDER_CSS, RAISED_CSS, LABEL_SECTION, TEXT_CSS, TEXT_2_CSS,
+)
 
-SOURCE_COLORS = {'persona': QColor(156, 104, 230, 238), 'persona_related': QColor(190, 139, 205, 232), 'outlook': QColor(201, 168, 76, 230), 'gmail': QColor(225, 142, 62, 230), 'manual': QColor(170, 154, 118, 230), 'agenda_chat': QColor(184, 162, 96, 230), 'ai': QColor(201, 168, 76, 220)}
+_MEM_BTN_CSS = f"""
+    QPushButton {{
+        background: transparent; color: {TEXT_2_CSS}; border: 1px solid {BORDER_CSS};
+        border-radius: 6px; padding: 3px 10px; font-size: 10px; font-family: {FONT};
+    }}
+    QPushButton:hover {{ background: {RAISED_CSS}; color: {TEXT_CSS}; }}
+"""
+_MEM_INPUT_CSS = f"""
+    QLineEdit {{
+        background: {RAISED_CSS}; border: 1px solid {BORDER_CSS}; border-radius: 6px;
+        color: {TEXT_CSS}; font-family: {FONT}; font-size: 11px; padding: 4px 8px;
+    }}
+"""
+
+SOURCE_COLORS = {
+    'persona':         QColor(155, 126, 222, 235),
+    'persona_related': QColor(180, 158, 232, 220),
+    'outlook':         QColor(91, 168, 196, 230),
+    'gmail':           QColor(221, 160, 90, 230),
+    'manual':          QColor(140, 146, 155, 230),
+    'agenda_chat':     QColor(201, 168, 76, 225),
+    'ai':              QColor(155, 161, 170, 220),
+}
 
 def _node_color(source: str) -> QColor:
     return SOURCE_COLORS.get(source, SOURCE_COLORS['manual'])
@@ -45,9 +71,9 @@ class ObsidianScene(QGraphicsScene):
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
         """Desenha o fundo pontilhado."""
-        painter.fillRect(rect, QColor(250, 246, 238, 255))
+        painter.fillRect(rect, C_BG_SOLID)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        painter.setPen(QPen(QColor(201, 168, 76, 34), 1))
+        painter.setPen(QPen(QColor(74, 78, 85, 60), 1))
         step = 28
         left = int(rect.left()) - int(rect.left()) % step
         top = int(rect.top()) - int(rect.top()) % step
@@ -73,7 +99,7 @@ class ObsidianView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setCacheMode(QGraphicsView.CacheModeFlag.CacheNone)
         self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontSavePainterState, True)
-        self.setStyleSheet('QGraphicsView { background: rgba(250,246,238,255); border: none; }')
+        self.setStyleSheet(f'QGraphicsView {{ background: {BG_SOLID_CSS}; border: none; }}')
         self._zoom = 1.0
 
     def wheelEvent(self, event):
@@ -98,11 +124,11 @@ class GraphEdge(QGraphicsLineItem):
         self.relation = relation
         self.setZValue(-2)
         if relation == 'mentions_persona' or self.source.is_persona or self.dest.is_persona:
-            color = QColor(156, 104, 230, 170)
+            color = QColor(155, 126, 222, 170)
         elif relation == 'ai_related':
-            color = QColor(201, 168, 76, 110)
+            color = QColor(74, 78, 85, 150)
         else:
-            color = QColor(201, 168, 76, 125 if strong else 80)
+            color = QColor(74, 78, 85, 175 if strong else 110)
         pen = QPen(color, 1.35 if relation == 'mentions_persona' else (1.25 if strong else 0.95))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         if not strong:
@@ -147,12 +173,12 @@ class GraphNode(QGraphicsEllipseItem):
         else:
             color = _node_color(item.get('source', 'manual'))
         self.base_color = color
-        self.setPen(QPen(QColor(201, 168, 76, 170), 1.2))
+        self.setPen(QPen(C_BORDER_HI, 1.2))
         self.setBrush(QBrush(color))
         title = item.get('title') or item.get('subject') or item.get('ai_summary') or 'Memoria'
         label = QGraphicsTextItem(_short_label(title), self)
-        label.setDefaultTextColor(QColor(42, 30, 8, 205))
-        label.setFont(QFont(FONT, 8))
+        label.setDefaultTextColor(C_TEXT)
+        label.setFont(QFont(FONT_FAMILY, 8))
         bw = label.boundingRect().width()
         label.setPos(-bw / 2, radius + 4)
         self.label = label
@@ -178,19 +204,19 @@ class GraphNode(QGraphicsEllipseItem):
         body.setColorAt(0.75, self.base_color)
         body.setColorAt(1.0, self.base_color.darker(112))
         if self.is_persona:
-            border = QColor(185, 130, 255, 235)
+            border = QColor(190, 170, 245, 235)
             width = 1.9
         elif self.persona_related:
-            border = QColor(185, 130, 255, 235) if self._hover else QColor(176, 116, 230, 190)
+            border = QColor(190, 170, 245, 235) if self._hover else QColor(155, 126, 222, 190)
             width = 1.45
         else:
-            border = C_GOLD_BRIGHT if self._hover else C_GOLD
+            border = C_GOLD_SOFT if self._hover else C_GOLD
             width = 1.5 if self._hover else 1.0
         painter.setPen(QPen(border, width))
         painter.setBrush(body)
         painter.drawEllipse(QPointF(0, 0), r, r)
         if self._selected:
-            painter.setPen(QPen(QColor(42, 30, 8, 170), 1.3))
+            painter.setPen(QPen(QColor(20, 21, 24, 190), 1.3))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(QPointF(0, 0), r + 4, r + 4)
 
@@ -331,9 +357,9 @@ class GraphTab(QWidget):
         title = QLabel('GRAFO DE MEMORIA')
         title.setStyleSheet(LABEL_SECTION)
         self.status = QLabel('')
-        self.status.setStyleSheet(f"color: {GOLD_BRIGHT_CSS}; font-size: 11px; font-family: {FONT}; font-style: italic;")
+        self.status.setStyleSheet(f"color: {TEXT_CSS}; font-size: 11px; font-family: {FONT}; font-style: italic;")
         self.stats = QLabel('')
-        self.stats.setStyleSheet(f"color: {TEXT_MID_CSS}; font-size: 10px; font-family: {FONT};")
+        self.stats.setStyleSheet(f"color: {TEXT_2_CSS}; font-size: 10px; font-family: {FONT};")
         fit_btn = IconButton('fit', 28, 'Centralizar')
         fit_btn.clicked.connect(self._fit_graph)
         header.addWidget(title)
@@ -348,8 +374,47 @@ class GraphTab(QWidget):
         layout.addWidget(self.view, 1)
         self.info = QLabel('Roxo = Persona. Clique em uma memória para ver detalhes. Arraste nós e use scroll para zoom.')
         self.info.setWordWrap(True)
-        self.info.setStyleSheet(f"color: {TEXT_MID_CSS}; font-size: 10px; font-family: {FONT};")
+        self.info.setStyleSheet(f"color: {TEXT_2_CSS}; font-size: 10px; font-family: {FONT};")
         layout.addWidget(self.info)
+
+        # Acoes do no selecionado: transparencia de verdade precisa deixar
+        # editar/apagar, nao so olhar. Ficam escondidas ate haver selecao,
+        # pra nao ocupar espaco do canvas o tempo todo.
+        self.detail_actions = QWidget()
+        da = QHBoxLayout(self.detail_actions)
+        da.setContentsMargins(0, 2, 0, 0)
+        da.setSpacing(6)
+        self.edit_btn = QPushButton('Editar')
+        self.edit_btn.setStyleSheet(_MEM_BTN_CSS)
+        self.edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit_btn.clicked.connect(self._start_edit)
+        self.delete_btn = QPushButton('Apagar')
+        self.delete_btn.setStyleSheet(_MEM_BTN_CSS)
+        self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_btn.clicked.connect(self._delete_selected)
+        da.addWidget(self.edit_btn)
+        da.addWidget(self.delete_btn)
+        da.addStretch()
+        self.detail_actions.hide()
+        layout.addWidget(self.detail_actions)
+
+        self.edit_row = QWidget()
+        er = QHBoxLayout(self.edit_row)
+        er.setContentsMargins(0, 2, 0, 0)
+        er.setSpacing(6)
+        self.edit_input = QLineEdit()
+        self.edit_input.setStyleSheet(_MEM_INPUT_CSS)
+        save_btn = QPushButton('Salvar')
+        save_btn.setStyleSheet(_MEM_BTN_CSS)
+        save_btn.clicked.connect(self._save_edit)
+        cancel_btn = QPushButton('Cancelar')
+        cancel_btn.setStyleSheet(_MEM_BTN_CSS)
+        cancel_btn.clicked.connect(self._cancel_edit)
+        er.addWidget(self.edit_input, 1)
+        er.addWidget(save_btn)
+        er.addWidget(cancel_btn)
+        self.edit_row.hide()
+        layout.addWidget(self.edit_row)
 
     def _physics_step(self):
         self._force.step(self._nodes, self._edges)
@@ -404,17 +469,17 @@ class GraphTab(QWidget):
         self._selected = None
         self.info.setText('Roxo = Persona. Clique em uma memória para ver detalhes. Arraste nós e use scroll para zoom.')
         persona_title = self.scene.addText('PERSONA')
-        persona_title.setDefaultTextColor(QColor(126, 75, 205, 150))
-        persona_title.setFont(QFont(FONT, 9, QFont.Weight.Bold))
+        persona_title.setDefaultTextColor(QColor(155, 126, 222, 165))
+        persona_title.setFont(QFont(FONT_FAMILY, 9, QFont.Weight.Bold))
         persona_title.setPos(-235, -130)
         memory_title = self.scene.addText('MEMÓRIAS')
-        memory_title.setDefaultTextColor(QColor(150, 120, 55, 135))
-        memory_title.setFont(QFont(FONT, 9, QFont.Weight.Bold))
+        memory_title.setDefaultTextColor(C_TEXT_MUTE)
+        memory_title.setFont(QFont(FONT_FAMILY, 9, QFont.Weight.Bold))
         memory_title.setPos(20, -130)
         if not items:
             empty = self.scene.addText('Nenhuma memoria ainda.')
-            empty.setDefaultTextColor(QColor(140, 110, 50))
-            empty.setFont(QFont(FONT, 11))
+            empty.setDefaultTextColor(C_TEXT_MUTE)
+            empty.setFont(QFont(FONT_FAMILY, 11))
             self.stats.setText('')
             return
         node_by_id = {}
@@ -492,6 +557,7 @@ class GraphTab(QWidget):
                 self._selected.set_selected(False)
         self._selected = node
         node.set_selected(True)
+        self.edit_row.hide()
         item = node.item
         title = item.get('title') or item.get('subject') or item.get('ai_summary') or 'Memória'
         source = 'Persona' if _is_persona_item(item) else (item.get('source') or 'manual').title()
@@ -504,3 +570,43 @@ class GraphTab(QWidget):
         if preview:
             meta += f"<br/>{preview[:220]}"
         self.info.setText(meta)
+        # O no sintetico "Persona" (hub central, id fixo) nao existe como
+        # linha no banco — nao ha o que editar/apagar nele.
+        if item.get('id') == 'persona:core':
+            self.detail_actions.hide()
+        else:
+            self.detail_actions.show()
+
+    def _start_edit(self):
+        if not self._selected:
+            return
+        item = self._selected.item
+        preview = (item.get('body') or item.get('body_preview') or '').strip()
+        self.edit_input.setText(preview)
+        self.edit_row.show()
+
+    def _cancel_edit(self):
+        self.edit_row.hide()
+
+    def _save_edit(self):
+        if not self._selected:
+            return
+        item_id = self._selected.node_id
+        texto = self.edit_input.text().strip()
+        from core.database import NigelDB
+        NigelDB.get_instance().update_saved_item_text(item_id, body_preview=texto)
+        self.edit_row.hide()
+        self._selected = None
+        self.refresh()
+
+    def _delete_selected(self):
+        if not self._selected:
+            return
+        item_id = self._selected.node_id
+        from core.database import NigelDB
+        NigelDB.get_instance().delete_saved_item(item_id)
+        self._selected = None
+        self.detail_actions.hide()
+        self.edit_row.hide()
+        self.info.setText('Roxo = Persona. Clique em uma memória para ver detalhes. Arraste nós e use scroll para zoom.')
+        self.refresh()

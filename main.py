@@ -1,33 +1,44 @@
 """
-main.py — Nigel entry point.
+main.py — Ponto de entrada do Nigel.
+
+Sobe a barra flutuante (janela raiz) e os workers de background:
+polling de Gmail/Outlook via Composio e o monitor de schedules vencidos.
 """
 
 import sys
 import os
 
-# Ensure project root is on the path so `ui` and `core` can be imported.
+# Garante que a raiz do projeto esteja no sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Configura encoding do console para evitar erros com emojis no Windows
+for _stream in (sys.stdout, sys.stderr):
+    if _stream and hasattr(_stream, 'reconfigure'):
+        try:
+            _stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, QTimer
-
 from ui.bar import Bar
 from core.polling_engine import GraphPollingWorker, GmailPollingWorker
 from core.scheduler import ScheduleCheckerWorker, set_active_checker
+from core.agenda_conflict import AgendaConflictWorker
+from core.meeting_prep import MeetingPrepWorker
 
 
-def _handle_overdue(items: list, bar: Bar):
-    bar.show_schedule_notification(len(items))
-    from ui.notification import NotificationPopup
-    for item in items:
-        NotificationPopup.show_msg(item, anchor=bar)
-
-
-def _handle_important_email(item: dict, bar: Bar, source: str):
-    summary = item.get('ai_summary') or item.get('subject', '')
-    print(f"[Nigel] ⚡ {source}: {summary}")
-    bar.brain_btn.set_badge(bar.brain_btn._badge + 1)
+def _stop_workers(workers: list):
+    """Encerra os QThreads de background de forma ordenada no fechamento do app."""
+    for w in workers:
+        try:
+            if hasattr(w, 'stop'):
+                w.stop()
+            w.quit()
+            w.wait(2000)
+        except Exception as e:
+            print(f"[Nigel] Falha ao encerrar worker {type(w).__name__}: {e}")
 
 
 def main():
@@ -39,45 +50,71 @@ def main():
     if os.path.exists(_icon_path):
         app.setWindowIcon(QIcon(_icon_path))
 
-    # Don't quit when the last (visible) window is closed —
-    # the bar is the root window and must stay alive.
+    # A barra flutuante é a janela raiz e deve permanecer ativa
     app.setQuitOnLastWindowClosed(False)
 
     bar = Bar()
     bar.show()
 
-    # Inicia os motores de polling em background (só notificam quando a IA classifica como importante)
-    graph_worker = GraphPollingWorker()
-    graph_worker.new_important_item.connect(
-        lambda item, b=bar: _handle_important_email(item, b, 'Outlook'))
-    graph_worker.status_update.connect(lambda msg: print(msg))
-    graph_worker.start()
+    # Assistente de primeira abertura — so' aparece uma vez (ver
+    # onboarding_completed em config.json), depois disso quem quiser
+    # conectar algo usa Configuracoes -> Integracoes normalmente.
+    from core.storage import load_config
+    if not load_config().get('onboarding_completed'):
+        def _show_onboarding():
+            from ui.onboarding import OnboardingWindow
+            wiz = OnboardingWindow()
+            wiz.show_centered()
+            app._onboarding = wiz
+        QTimer.singleShot(400, _show_onboarding)
 
-    gmail_worker = GmailPollingWorker()
-    gmail_worker.new_important_item.connect(
-        lambda item, b=bar: _handle_important_email(item, b, 'Gmail'))
-    gmail_worker.status_update.connect(lambda msg: print(msg))
-    gmail_worker.start()
+    workers = []
 
-    # Manter referências para não serem coletadas pelo GC
-    app._workers = [graph_worker, gmail_worker]
+    # Polling de inbox em background via Composio
+    for worker_cls, source in ((GraphPollingWorker, 'Outlook'), (GmailPollingWorker, 'Gmail')):
+        worker = worker_cls()
+        worker.new_important_item.connect(
+            lambda item, s=source: bar.handle_important_item(item, s),
+            Qt.ConnectionType.QueuedConnection)
+        worker.status_update.connect(print)
+        worker.start()
+        workers.append(worker)
 
     # Monitor de schedules vencidos
     schedule_checker = ScheduleCheckerWorker()
     set_active_checker(schedule_checker)
     schedule_checker.overdue_found.connect(
-        lambda items, b=bar: _handle_overdue(items, b),
-        Qt.ConnectionType.QueuedConnection)
+        bar.handle_overdue, Qt.ConnectionType.QueuedConnection)
+    schedule_checker.task_executed.connect(
+        bar.handle_task_result, Qt.ConnectionType.QueuedConnection)
     bar.set_schedule_checker(schedule_checker)
-    print("[Nigel] Starting checker worker...")
     schedule_checker.start()
-    app._workers.append(schedule_checker)
-    # Segunda checagem após a UI estar pronta
-    QTimer.singleShot(800, schedule_checker.force_check)
+    workers.append(schedule_checker)
 
-    print("[Nigel] Entering app.exec()...")
+    # Monitor de conflito de agenda no Google Calendar real
+    conflict_checker = AgendaConflictWorker()
+    conflict_checker.conflict_found.connect(
+        bar.handle_agenda_conflict, Qt.ConnectionType.QueuedConnection)
+    conflict_checker.start()
+    workers.append(conflict_checker)
+
+    # Preparacao de reuniao antes dela comecar
+    prep_worker = MeetingPrepWorker()
+    prep_worker.prep_ready.connect(
+        bar.handle_meeting_prep, Qt.ConnectionType.QueuedConnection)
+    prep_worker.start()
+    workers.append(prep_worker)
+
+    # Manter referências para não serem coletadas pelo GC
+    app._workers = workers
+    app.aboutToQuit.connect(lambda: _stop_workers(workers))
+
+    # Segunda checagem após a UI estar pronta
+    QTimer.singleShot(1000, schedule_checker.force_check)
+
+    print("[Nigel] Nigel iniciado com sucesso.")
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()
-
