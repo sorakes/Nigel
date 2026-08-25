@@ -8,7 +8,39 @@ import requests
 from PyQt6.QtCore import QThread, pyqtSignal
 from dotenv import load_dotenv
 
-load_dotenv()
+
+def _env_path() -> str:
+    """Onde o `.env` mora de verdade: AppData, não a pasta do código-fonte.
+
+    Antes calculava `os.path.dirname(os.path.dirname(__file__))` — funciona
+    rodando `python main.py`, mas quebra no `.exe` empacotado: o PyInstaller
+    extrai o código pra uma pasta temporária apagada ao fechar, então toda
+    chave salva sumiria a cada reinício. AppData é o mesmo lugar que
+    `core/storage.py` já usa pro banco e pro config.json — consistente com
+    o resto do app, e sobrevive a atualização/reinstalação.
+    """
+    from core.storage import get_appdata_dir
+    return os.path.join(get_appdata_dir(), '.env')
+
+
+def _migrate_env_if_needed() -> None:
+    """Primeira vez rodando depois da mudança: copia o `.env` antigo (raiz
+    do projeto) pra AppData, se existir um lá e ainda não existir cá."""
+    target = _env_path()
+    if os.path.exists(target):
+        return
+    old = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+    if os.path.exists(old):
+        import shutil
+        try:
+            shutil.copy(old, target)
+            print(f'[Nigel] .env migrado de {old} para {target}')
+        except OSError as e:
+            print(f'[Nigel] Falha ao migrar .env: {e}')
+
+
+_migrate_env_if_needed()
+load_dotenv(dotenv_path=_env_path())
 
 PROVIDERS: dict[str, dict] = {
     # Padroes revisados em 2026-08-24 depois de dois achados: o antigo padrao
@@ -243,11 +275,11 @@ class APIClient:
     """Facade for managing providers, settings, and creating stream workers."""
 
     def __init__(self):
-        load_dotenv(override=True)
+        load_dotenv(dotenv_path=_env_path(), override=True)
 
     def reload(self):
         """Reloads environment variables from the .env file."""
-        load_dotenv(override=True)
+        load_dotenv(dotenv_path=_env_path(), override=True)
 
     def get_active_provider(self) -> str | None:
         """
@@ -276,7 +308,7 @@ class APIClient:
         """
         Same provider/model/key resolution as StreamWorker — used by gate, compliance, graph, triage.
         """
-        load_dotenv(override=True)
+        load_dotenv(dotenv_path=_env_path(), override=True)
         active = provider or self.get_active_provider()
         if not active:
             raise ValueError('Nenhum provider LLM configurado.')
@@ -320,7 +352,7 @@ class APIClient:
         return StreamWorker(provider, messages, model)
 
     def get_settings(self) -> dict:
-        load_dotenv(override=True)
+        load_dotenv(dotenv_path=_env_path(), override=True)
         return {
             'NIGEL_ACTIVE_PROVIDER': os.getenv('NIGEL_ACTIVE_PROVIDER', ''),
             'NIGEL_GROQ_API_KEY': os.getenv('NIGEL_GROQ_API_KEY', ''),
@@ -340,7 +372,7 @@ class APIClient:
         }
 
     def save_settings(self, new_values: dict):
-        env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+        env_path = _env_path()
         existing = {}
         if os.path.exists(env_path):
             with open(env_path, 'r', encoding='utf-8') as f:
